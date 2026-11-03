@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Factfulness — 근거로 나누는 진실</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="bg-mesh" aria-hidden="true"></div>
+
+  <header class="topbar">
+    <a class="brand" href="#" data-view="home">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span class="brand-name">Factfulness</span>
+    </a>
+    <nav class="topnav">
+      <button type="button" class="nav-link is-active" data-view="home">탐색</button>
+      <button type="button" class="nav-link" data-view="rules">점수 규칙</button>
+    </nav>
+    <button type="button" class="btn btn-primary" id="btn-new-topic">토픽 제안</button>
+  </header>
+
+  <main>
+    <!-- HOME -->
+    <section id="view-home" class="view is-visible">
+      <div class="hero">
+        <p class="brand-hero">Factfulness</p>
+        <h1>주장 하나를 쪼개고,<br />근거로 진실에 다가가세요</h1>
+        <p class="lede">토픽 아래 검증 가능한 명제를 두고, 자료와 토론으로 True / False를 가릅니다. 여론 점수와 팩트 점수는 서로 다른 규칙으로 집계됩니다.</p>
+        <div class="hero-cta">
+          <button type="button" class="btn btn-primary" data-open-topic="t1">예시 토픽 열기</button>
+          <button type="button" class="btn btn-ghost" data-view="rules">팩트 점수 조건 보기</button>
+        </div>
+      </div>
+
+      <div class="section-head">
+        <h2>진행 중인 토픽</h2>
+        <p>사람들이 증거를 모으고 있는 공개 검증입니다.</p>
+      </div>
+
+      <div class="topic-list" id="topic-list"></div>
+    </section>
+
+    <!-- TOPIC DETAIL -->
+    <section id="view-topic" class="view">
+      <button type="button" class="back-link" data-view="home">← 토픽 목록</button>
+      <article class="topic-hero" id="topic-hero"></article>
+      <div class="section-head tight section-head-row">
+        <div>
+          <h2>세부 명제</h2>
+          <p>각 명제는 독립적으로 True / False를 판단합니다.</p>
+        </div>
+        <button type="button" class="btn btn-primary" id="btn-new-claim">세부 명제 제안</button>
+      </div>
+      <div class="claim-list" id="claim-list"></div>
+    </section>
+
+    <!-- CLAIM DETAIL -->
+    <section id="view-claim" class="view">
+      <button type="button" class="back-link" id="back-to-topic">← 토픽으로</button>
+      <article class="claim-panel" id="claim-panel"></article>
+
+      <div class="split">
+        <div class="col">
+          <div class="section-head tight">
+            <h2>증거 자료</h2>
+            <p>출처가 있는 자료만 팩트 점수에 반영됩니다.</p>
+          </div>
+          <div id="evidence-list" class="evidence-list"></div>
+          <form class="upload-form" id="evidence-form">
+            <h3>자료 업로드</h3>
+            <label>
+              제목
+              <input type="text" name="title" placeholder="예: 통계청 2024 발표" required />
+            </label>
+            <label>
+              출처 URL
+              <input type="url" name="url" placeholder="https://" required />
+            </label>
+            <label>
+              지지 방향
+              <select name="stance">
+                <option value="true">True를 지지</option>
+                <option value="false">False를 지지</option>
+                <option value="neutral">중립 / 맥락</option>
+              </select>
+            </label>
+            <label>
+              요약
+              <textarea name="summary" rows="3" placeholder="이 자료가 명제를 어떻게 뒷받침하는지" required></textarea>
+            </label>
+            <button type="submit" class="btn btn-primary">자료 등록</button>
+          </form>
+        </div>
+
+        <div class="col">
+          <div class="section-head tight">
+            <h2>토론</h2>
+            <p>댓글은 여론에 영향을 주지만, 출처 없이는 팩트 점수에 들어가지 않습니다.</p>
+          </div>
+          <div id="comment-list" class="comment-list"></div>
+          <form class="comment-form" id="comment-form">
+            <label>
+              댓글
+              <textarea name="body" rows="3" placeholder="의견 또는 반론을 남겨주세요" required></textarea>
+            </label>
+            <div class="form-row">
+              <label class="inline">
+                투표 연동
+                <select name="vote">
+                  <option value="">투표 없음</option>
+                  <option value="true">True</option>
+                  <option value="false">False</option>
+                </select>
+              </label>
+              <button type="submit" class="btn btn-primary">댓글 남기기</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </section>
+
+    <!-- RULES -->
+    <section id="view-rules" class="view">
+      <div class="rules-hero">
+        <p class="eyebrow">Scoring model</p>
+        <h1>여론 점수와 팩트 점수는<br />다른 기준으로 움직입니다</h1>
+        <p class="lede">누구나 의견을 낼 수 있지만, “사실”로 인정되는 점수는 증거가 조건을 통과할 때만 쌓입니다.</p>
+      </div>
+
+      <div class="rules-grid">
+        <div class="rule-block">
+          <h2>여론 점수 (Opinion)</h2>
+          <p>참여자 True / False 투표의 순수 비율입니다. 댓글·감정적 반응도 여기 반영됩니다.</p>
+          <ul>
+            <li>투표 1표 = 여론 1표</li>
+            <li>출처 유무와 무관</li>
+            <li>실시간으로 변동</li>
+          </ul>
+          <div class="formula">Opinion = True 투표 ÷ 전체 투표</div>
+        </div>
+        <div class="rule-block accent">
+          <h2>팩트 점수 (Fact / Lie)</h2>
+          <p>아래 조건을 <strong>모두</strong> 만족하는 증거 기반 투표만 Fact 또는 Lie로 집계됩니다.</p>
+          <ol class="conditions">
+            <li><span>C1</span> 출처 URL 또는 업로드 파일이 있음</li>
+            <li><span>C2</span> 자료가 커뮤니티에서 신뢰 추천 ≥ 3</li>
+            <li><span>C3</span> 동일 방향 적격 증거 ≥ 2건 (서로 다른 출처)</li>
+            <li><span>C4</span> 반대 방향 적격 증거가 더 많지 않음</li>
+          </ol>
+          <div class="formula">Fact = 적격 True 증거 가중치 ÷ (True+False 적격 가중치)</div>
+        </div>
+      </div>
+
+      <div class="status-legend">
+        <h2>판정 상태</h2>
+        <div class="legend-row">
+          <span class="badge pending">검증 중</span>
+          <p>조건 미충족 — 여론만 표시, Fact/Lie 미확정</p>
+        </div>
+        <div class="legend-row">
+          <span class="badge fact">Fact</span>
+          <p>적격 증거가 True 쪽으로 우세 (임계값 ≥ 65%)</p>
+        </div>
+        <div class="legend-row">
+          <span class="badge lie">Lie</span>
+          <p>적격 증거가 False 쪽으로 우세 (임계값 ≥ 65%)</p>
+        </div>
+        <div class="legend-row">
+          <span class="badge split">경합</span>
+          <p>적격 증거는 있으나 어느 쪽도 65% 미만</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="topic-dialog">
+    <form method="dialog" id="new-topic-form" class="dialog-form">
+      <h2>새 토픽 제안</h2>
+      <label>
+        토픽 제목
+        <input type="text" name="title" placeholder="검증하고 싶은 주장" required />
+      </label>
+      <label>
+        배경 설명
+        <textarea name="summary" rows="3" placeholder="왜 이 주장이 검증되어야 하는지" required></textarea>
+      </label>
+      <label>
+        첫 세부 명제
+        <input type="text" name="claim" placeholder="True/False로 판단 가능한 한 문장" required />
+      </label>
+      <div class="dialog-actions">
+        <button type="submit" class="btn btn-ghost" value="cancel">취소</button>
+        <button type="submit" class="btn btn-primary" value="ok">제안하기</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="claim-dialog">
+    <form method="dialog" id="new-claim-form" class="dialog-form">
+      <h2>세부 명제 제안</h2>
+      <p class="hint" id="claim-dialog-topic"></p>
+      <label>
+        명제 문장
+        <textarea name="text" rows="3" placeholder="True 또는 False로만 판단할 수 있는 구체적인 한 문장" required></textarea>
+      </label>
+      <label>
+        제안 이유 (선택)
+        <textarea name="reason" rows="2" placeholder="왜 이 명제가 토픽 검증에 필요한지"></textarea>
+      </label>
+      <div class="dialog-actions">
+        <button type="submit" class="btn btn-ghost" value="cancel">취소</button>
+        <button type="submit" class="btn btn-primary" value="ok">제안하기</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>

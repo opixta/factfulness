@@ -1,9 +1,14 @@
-import React, { useContext, useEffect, useMemo, useState } from "react";
+import React, { useContext, useEffect, useMemo, useRef, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { router, type Href } from "expo-router";
 
 import { isSupabaseAuthEnabled } from "@/api/config";
 import { setDevProfileGetter } from "@/auth/devProfileBridge";
+import {
+  isNicknameConfirmedForUser,
+  markNicknameConfirmed,
+  navigateToNicknameOnboarding,
+  needsNicknameOnboarding,
+} from "@/auth/nicknameOnboarding";
 import {
   PROFILE_STORAGE_KEY,
   validateNickname,
@@ -28,6 +33,8 @@ function newUserId(): string {
 export function UserProfileProvider({ children }: { children: React.ReactNode }) {
   const [profile, setProfile] = useState<LocalUserProfile | null>(null);
   const [ready, setReady] = useState(false);
+  const [remoteProfileLoaded, setRemoteProfileLoaded] = useState(!isSupabaseAuthEnabled());
+  const onboardingNavigated = useRef(false);
   const { repo, ready: repoReady } = useFactfulness();
   const { session, supabaseEnabled } = useAuth();
 
@@ -55,11 +62,38 @@ export function UserProfileProvider({ children }: { children: React.ReactNode })
   }, [profile]);
 
   useEffect(() => {
-    if (!repoReady || !session || !isApiRepository(repo)) return;
-    void repo.fetchMe().then((me) => {
-      setProfile({ userId: me.externalId, nickname: me.displayName });
-    }).catch(() => {});
-  }, [repo, repoReady, session]);
+    if (!session) {
+      setRemoteProfileLoaded(!supabaseEnabled);
+      if (supabaseEnabled) {
+        setProfile(null);
+      }
+      onboardingNavigated.current = false;
+      return;
+    }
+    if (!repoReady || !isApiRepository(repo)) {
+      setRemoteProfileLoaded(true);
+      setProfile((prev) => ({
+        userId: session.user.id,
+        nickname: prev?.nickname ?? "",
+      }));
+      return;
+    }
+    setRemoteProfileLoaded(false);
+    void (async () => {
+      try {
+        const me = await repo.fetchMe();
+        const confirmed = await isNicknameConfirmedForUser(me.externalId);
+        setProfile({
+          userId: me.externalId,
+          nickname: confirmed ? me.displayName : "",
+        });
+      } catch {
+        setProfile({ userId: session.user.id, nickname: "" });
+      } finally {
+        setRemoteProfileLoaded(true);
+      }
+    })();
+  }, [repo, repoReady, session, supabaseEnabled]);
 
   useEffect(() => {
     if (!repoReady || !profile || isSupabaseAuthEnabled()) return;
@@ -67,22 +101,31 @@ export function UserProfileProvider({ children }: { children: React.ReactNode })
   }, [repo, repoReady, profile]);
 
   useEffect(() => {
-    if (!ready) return;
-    if (supabaseEnabled && !session) return;
-    if (profile?.nickname && !validateNickname(profile.nickname)) return;
-    router.push("/onboarding-nickname" as Href);
-  }, [ready, profile?.nickname, supabaseEnabled, session]);
+    const should = needsNicknameOnboarding(profile, {
+      profileReady: ready,
+      supabaseEnabled,
+      hasSession: Boolean(session),
+      remoteProfileLoaded,
+    });
+    if (!should) {
+      onboardingNavigated.current = false;
+      return;
+    }
+    if (onboardingNavigated.current) return;
+    onboardingNavigated.current = true;
+    navigateToNicknameOnboarding();
+  }, [ready, profile, supabaseEnabled, session, remoteProfileLoaded]);
 
   const setNickname = async (nickname: string): Promise<string | null> => {
     const err = validateNickname(nickname);
     if (err) return err;
     const trimmed = nickname.trim();
-    const next: LocalUserProfile = {
-      userId: profile?.userId ?? session?.user.id ?? newUserId(),
-      nickname: trimmed,
-    };
+    const userId = profile?.userId ?? session?.user.id ?? newUserId();
+    const next: LocalUserProfile = { userId, nickname: trimmed };
     if (!isSupabaseAuthEnabled()) {
       await AsyncStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(next));
+    } else {
+      await markNicknameConfirmed(userId);
     }
     setProfile(next);
     if (repoReady) {

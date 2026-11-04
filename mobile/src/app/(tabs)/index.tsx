@@ -1,6 +1,14 @@
 import { router } from "expo-router";
 import { useMemo, useState } from "react";
-import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import {
+  ActivityIndicator,
+  FlatList,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { Card, Screen } from "@/components/layout";
@@ -9,13 +17,16 @@ import { topicDisplayTags, topicUpdatedLabel } from "@/data/topicDisplay";
 import { useFactfulness } from "@/context/FactfulnessContext";
 import { factScore } from "@/scoring";
 import { evidenceInputsFromList } from "@/scoring/evidenceInput";
-import { searchTopicsAndClaims, type TitleSearchHit } from "@/search/titleSearch";
+import { useTitleSearch } from "@/search/useTitleSearch";
+import type { TitleSearchHit } from "@/search/titleSearch";
 import { Colors, Fonts, Radius, Spacing } from "@/theme/brand";
 
 export default function HomeScreen() {
   const { repo } = useFactfulness();
   const [searchQuery, setSearchQuery] = useState("");
   const topics = repo.getTopics();
+  const { searching, loading, hits, error, retry, loadMore, hasMore } =
+    useTitleSearch(searchQuery);
 
   const claimsByTopic = useMemo(() => {
     const map: Record<string, ReturnType<typeof repo.getClaims>> = {};
@@ -25,15 +36,8 @@ export default function HomeScreen() {
     return map;
   }, [repo, topics]);
 
-  const searchHits = useMemo(
-    () => searchTopicsAndClaims(topics, claimsByTopic, searchQuery),
-    [topics, claimsByTopic, searchQuery],
-  );
-
-  const searching = Boolean(searchQuery.trim());
-
   const listData: TitleSearchHit[] = searching
-    ? searchHits
+    ? hits
     : topics.map((t) => ({ topic: t }));
 
   return (
@@ -44,6 +48,10 @@ export default function HomeScreen() {
           item.claim ? `claim-${item.claim.id}` : `topic-${item.topic.id}-${index}`
         }
         contentContainerStyle={styles.list}
+        onEndReached={() => {
+          if (searching && hasMore) loadMore();
+        }}
+        onEndReachedThreshold={0.4}
         ListHeaderComponent={
           <View style={styles.hero}>
             <Text style={styles.brandHero}>Factfulness</Text>
@@ -73,6 +81,18 @@ export default function HomeScreen() {
               autoCapitalize="none"
               clearButtonMode="while-editing"
             />
+            {searching && loading ? (
+              <ActivityIndicator color={Colors.teal} style={styles.searchStatus} />
+            ) : null}
+            {searching && error ? (
+              <View style={styles.searchErrorRow}>
+                <Text style={styles.searchErrorText}>{error}</Text>
+                <GhostButton label="다시 시도" onPress={retry} />
+              </View>
+            ) : null}
+            {searching && !loading && !error && hits.length === 0 ? (
+              <Text style={styles.searchEmpty}>검색 결과가 없습니다.</Text>
+            ) : null}
           </View>
         }
         renderItem={({ item }) => {
@@ -182,6 +202,15 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.white,
     marginBottom: Spacing.md,
   },
+  searchStatus: { marginBottom: Spacing.sm },
+  searchEmpty: {
+    fontFamily: Fonts.ui,
+    fontSize: 14,
+    color: Colors.inkSoft,
+    marginBottom: Spacing.md,
+  },
+  searchErrorRow: { marginBottom: Spacing.md, gap: Spacing.sm },
+  searchErrorText: { fontFamily: Fonts.ui, color: Colors.coral, fontSize: 14 },
   searchHitLabel: {
     fontFamily: Fonts.uiMedium,
     fontSize: 12,

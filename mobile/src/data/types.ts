@@ -32,6 +32,8 @@ export interface Evidence {
   fileName?: string;
   fileMime?: string;
   localFileUri?: string;
+  /** File uploads only — URL evidence ignores scan. Server: ClamAV pipeline. */
+  fileScanStatus?: "pending" | "clean" | "infected";
 }
 
 export interface Comment {

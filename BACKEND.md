@@ -4,7 +4,7 @@
 점수 규칙·**확정된** 제품 결정은 [`HANDOFF.md`](./HANDOFF.md) §3·§6을 따르고, 여기서는 **실제 앱 코드**(`data/types`, `repository/*`, `scoring/*`, 화면 흐름)에 맞춘 **구체적인 구현 체크리스트**를 다룹니다.
 
 - **Repo**: `https://github.com/opixta/factfulness.git`
-- **모바일 SSOT (점수 참조)**: `mobile/src/scoring/` (`RULE_VERSION`: `2026-11-04-v2`)
+- **모바일 SSOT (점수 참조)**: `mobile/src/scoring/` (`RULE_VERSION`: `2026-11-04-v3`)
 - **시드 데이터**: `mobile/src/data/seed.ts`
 
 ---
@@ -162,9 +162,14 @@ CREATE TABLE evidence (
   user_id     UUID NOT NULL REFERENCES users(id),
   title       TEXT NOT NULL,
   url         TEXT,
-  file_key    TEXT,              -- S3/R2; C1 satisfied if url OR file_key
   file_mime   TEXT,              -- image/* or application/pdf only
   file_size   INT,               -- max 10_485_760 bytes
+  scan_status TEXT CHECK (scan_status IN ('pending','clean','infected')),
+  scanned_at  TIMESTAMPTZ,
+  status      TEXT NOT NULL DEFAULT 'active'
+                CHECK (status IN ('active','rejected')),  -- rejected when infected
+  quarantine_file_key TEXT,      -- object key while pending scan
+  file_key    TEXT,              -- promoted after scan_status=clean; C1 file source
   stance      TEXT NOT NULL CHECK (stance IN ('true','false','neutral')),
   summary     TEXT NOT NULL,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -417,7 +422,9 @@ Optional `GET /config/scoring`:
 
 **확정 후 새 증거/trust**: **항상 재계산** + **append history row** every time.
 
-**C3 file evidence (default — PO may revisit)**: each uploaded file uses source key `file:{evidence_id}` so **two uploads always count as two sources**, even from the same user. Alternative: `file-uploader:{user_id}` — not implemented.
+**C3 file evidence (decided)**: each upload uses source key **`file:{evidence_id}`** — two files from the same user are two distinct sources.
+
+**File C1 + ClamAV (decided)**: only files with `scan_status = clean` count as a source for C1/C3; `pending` and `infected` do not (see §7).
 
 ### 5.3 Golden tests (c1 / c2 / c3)
 
@@ -480,19 +487,73 @@ def verify_supabase_token(token: str, secret: str, project_url: str) -> dict:
 
 ---
 
-## 7. 증거 URL · 파일 업로드
+## 7. 증거 URL · 파일 업로드 · ClamAV
 
-앱: URL **또는** 로컬 파일(image/PDF ≤10MB). 서버: presigned upload + `file_key`.
+앱: URL **또는** 로컬 파일(image/PDF ≤10MB). 서버: presigned upload → **quarantine** → ClamAV → promote or reject.
+
+### 7.1 업로드 → 스캔 → 적격 (ClamAV)
+
+**인프라**
+
+- `clamd` **sidecar** 또는 별도 컨테이너 (Docker Compose / K8s)
+- API 워커가 TCP `3310` (또는 Unix socket)로 `INSTREAM` / `clamdscan` 호출
+- 바이러스 DB 갱신: `freshclam` cron (운영 runbook)
+
+**흐름**
+
+```
+1. Client POST /claims/{id}/evidence (multipart) or presigned PUT → quarantine bucket/key
+2. DB: evidence row
+     scan_status = 'pending'
+     status = 'active'
+     quarantine_file_key = ...
+     file_key = NULL
+3. Enqueue scan job (동기 MVP 가능, 비동기 권장)
+4. Worker streams object bytes → clamd
+   ├─ CLEAN  → scan_status='clean', scanned_at=now(),
+   │           copy quarantine → file_key (public/CDN), delete quarantine,
+   │           recompute claim_scores + history
+   └─ INFECTED → scan_status='infected', status='rejected', scanned_at=now(),
+                 delete quarantine object, gate trust/evidence UI,
+                 recompute (file must NOT count toward C1/C3)
+```
+
+**스코어링 규칙 (모바일 `mobile/src/scoring/`와 동일)**
+
+| scan_status | C1 (file) | C3 `file:{id}` | trust 집계 |
+|-------------|-----------|----------------|------------|
+| `pending`   | ❌        | ❌             | 허용 여부 **미공개** — MVP: trust on pending file **금지** 권장 |
+| `clean`     | ✅ (if mime/size ok) | ✅ | ✅ |
+| `infected`  | ❌        | ❌             | ❌ (row rejected) |
+
+URL-only evidence: `scan_status` **NULL** — ClamAV 대상 아님.
+
+**API / UX**
+
+- [ ] Evidence DTO: `scanStatus`, `scannedAt`, `status` (`active`|`rejected`)
+- [ ] `pending` 파일: “스캔 중” 배지, 팩트 점수 미반영
+- [ ] `infected`: 사용자에게 거부 사유(generic), 관리자 로그에 signature
+
+**Env (예)**
+
+```
+CLAMAV_HOST=clamd
+CLAMAV_PORT=3310
+CLAMAV_TIMEOUT_SECONDS=120
+QUARANTINE_BUCKET=...
+EVIDENCE_BUCKET=...
+```
+
+### 7.2 MIME · C3 · 포팅
 
 **서버 작업**
 
 - [ ] URL normalize (strip, scheme allowlist)
-- [ ] C1: `url` **OR** `file_key`; `neutral` never eligible
-- [ ] `source_domain(url)` + `file:{evidence_id}` — scoring과 동일 Python 포팅
+- [ ] C1: `url` **OR** (`file_key` **AND** `scan_status='clean'`)
+- [ ] `source_domain(url)` + **`file:{evidence_id}`** (decided) — Python scoring 미러
 - [ ] MIME allowlist: `image/jpeg`, `image/png`, `image/webp`, `image/gif`, `application/pdf`
 - [ ] Max size **10MB**
-- [ ] C3 file default: **`file:{evidence_id}`** per upload (§5.2)
-- [ ] Virus scan: **미결정** (hook placeholder)
+- [ ] ClamAV pipeline (§7.1) + Alembic columns in §3.2
 
 ---
 
@@ -565,7 +626,8 @@ CORS_ORIGINS=https://...,exp://...
 TRUST_MIN=3
 MIN_ELIGIBLE_SAME_DIR=2
 FACT_THRESHOLD=0.65
-RULE_VERSION=2026-03-24-draft
+RULE_VERSION=2026-11-04-v3
+# Production rate limits (decided — keep in sync with mobile/src/config/rateLimits.ts)
 RATE_LIMIT_VOTE_PER_USER_PER_MIN=30
 RATE_LIMIT_TRUST_PER_USER_PER_MIN=60
 RATE_LIMIT_COMMENT_PER_USER_PER_MIN=20
@@ -573,6 +635,8 @@ RATE_LIMIT_TOPIC_CREATE_PER_USER_PER_HOUR=5
 RATE_LIMIT_CLAIM_CREATE_PER_USER_PER_HOUR=20
 RATE_LIMIT_EVIDENCE_CREATE_PER_USER_PER_HOUR=30
 ```
+
+**Rate limits (decided)**: 위 값은 **프로덕션 기본**이며 `mobile/src/config/rateLimits.ts`와 동기화한다. 초기 출시 후에도 변경 시 문서·env·모바일 상수를 함께 bump.
 
 **작업 항목**
 
@@ -587,7 +651,7 @@ RATE_LIMIT_EVIDENCE_CREATE_PER_USER_PER_HOUR=30
 
 | 위험 | 완화 (작업 항목) |
 |------|------------------|
-| trust/vote spam | Tunable rate limits (§10); **no CAPTCHA** v1 |
+| trust/vote spam | **Production** rate limits (§10); no CAPTCHA v1 |
 | 악성 URL | scheme allowlist; optional domain blocklist |
 | XSS in comments | **Plain text**; escape + URL linkify only |
 | mass topic/claim | throttle `POST /topics`; **신고 → hide** (`content_reports` + `hidden_at`) |
@@ -631,19 +695,21 @@ RATE_LIMIT_EVIDENCE_CREATE_PER_USER_PER_HOUR=30
 
 ## 13. 확정된 제품·운영 결정
 
-HANDOFF §6과 동일. 추가 (2026-11-04):
+HANDOFF §6과 동일. Highlights:
 
-- [x] `participants` / `updated_at` (§3.1)
-- [x] `claim_score_history` every recompute
-- [x] File C1 (url OR file), MIME/size; C3 **`file:{evidence_id}`** default
-- [x] Plain comments + auto-link; no CAPTCHA; rate limit defaults (§10)
-- [x] Nickname onboarding; derived 「신규」 7d tag
+- [x] Scoring thresholds, C3 domains, neutral exclusion, recompute + history
+- [x] Supabase auth, public read, comment vote = single vote
+- [x] Participants / `updated_at`, nickname, derived 「신규」 tag
+- [x] **ClamAV** server-side scan; `pending`|`infected` files **excluded** from C1/C3
+- [x] File C3: **`file:{evidence_id}`** per upload (decided)
+- [x] **Production rate limits** = `mobile/src/config/rateLimits.ts` (decided)
 
 ## 14. 아직 열린 결정
 
-- [ ] Virus scan on upload
-- [ ] File C3 grouping by uploader (alternative to per-file default)
-- [ ] Rate limit tuning in production
+- [ ] Object storage / CDN vendor & key layout (quarantine vs public buckets)
+- [ ] Profanity / automated moderation rules on plain-text comments
+- [ ] Offline mutation queue on mobile
+- [ ] Trust on `scan_status=pending` files (MVP recommendation: deny)
 
 ---
 

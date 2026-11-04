@@ -204,6 +204,10 @@ export class LocalFactfulnessRepository implements FactfulnessRepository {
   ): Evidence {
     const found = this.findClaim(claimId);
     const item: Evidence = { ...input, id: uid("e"), trust: 0 };
+    if (item.fileName || item.localFileUri) {
+      // Local dev simulates post-scan; API sets pending until ClamAV clean.
+      item.fileScanStatus = "clean";
+    }
     if (!this.data.evidence[claimId]) this.data.evidence[claimId] = [];
     this.data.evidence[claimId].unshift(item);
     if (found) {

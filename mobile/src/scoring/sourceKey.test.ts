@@ -15,7 +15,7 @@ describe("evidenceSourceKey / C3 file default", () => {
     ).toBe("example.com");
   });
 
-  it("each file id is its own distinct source (PO default)", () => {
+  it("each file id is its own distinct source (decided rule)", () => {
     const count = distinctSourceCount([
       { id: "f1", fileId: "f1", stance: "false", trust: 5 },
       { id: "f2", fileId: "f2", stance: "false", trust: 5 },

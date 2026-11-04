@@ -14,6 +14,7 @@ import {
 } from "react-native";
 
 import { LinkedText } from "@/components/LinkedText";
+import { EvidenceLinkPreview } from "@/components/EvidenceLinkPreview";
 import { Card, Screen } from "@/components/layout";
 import { factLabel, ScorePair } from "@/components/ScorePair";
 import { EligibleBadge, StanceBadge } from "@/components/StanceBadge";
@@ -181,6 +182,10 @@ export default function ClaimScreen() {
                 <Text style={styles.body}>{e.summary}</Text>
                 {e.url ? (
                   <>
+                    <EvidenceLinkPreview
+                      evidence={e}
+                      onOpenUrl={() => void WebBrowser.openBrowserAsync(e.url)}
+                    />
                     <Pressable onPress={() => void WebBrowser.openBrowserAsync(e.url)}>
                       <Text style={styles.link}>{e.url}</Text>
                     </Pressable>

@@ -34,8 +34,8 @@ export function FactfulnessProvider({ children }: { children: React.ReactNode })
     void LocalFactfulnessRepository.create().then((instance) => {
       setRepo(instance);
       unsub = instance.subscribe(refresh);
-      void registerPushNotificationsStub().then((token) => {
-        if (token) instance.setPushTokenDev(token);
+      void registerPushNotificationsStub(instance.getNotificationPrefs()).then((token) => {
+        instance.setPushTokenDev(token);
       });
     });
     return () => unsub?.();

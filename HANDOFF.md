@@ -272,18 +272,19 @@ scoring/
 
 ### 2026-11-04 (라운드 6 — 신고·검색·알림·아카이브)
 
-- **신고**: 서로 다른 **3명** 신고 시 **`hidden_at` 자동** (기본 `REPORT_AUTO_HIDE_THRESHOLD=3`, tunable). Admin UI 없음 — DB unhide runbook (`BACKEND.md` §11.2).
-- **검색**: MVP **토픽·명제 제목** 검색 — `GET /search?q=` + 모바일 탭 검색 UI.
-- **알림**: 참여 claim의 **판정 상태 변경** 시 Expo push (토큰 테이블 + opt-in stub).
-- **링크 아카이브**: 증거 URL → **Wayback Save Page Now** 비동기 job; `archive_url` / UI 표시.
-- **릴리스**: LDNOOBW **CC BY 4.0** in-app 고지 화면 (`/licenses`).
+- 신고 threshold auto-hide, title search, push stub, Wayback archive — see [`BACKEND.md`](./BACKEND.md).
+
+### 2026-11-04 (라운드 7 — 알림 opt-out·검색 확정·링크 미리보기)
+
+- **푸시 opt-out**: 설정 탭 토글 → `notificationPrefs.notifyVerdictChange` (로컬); 서버 `users.notify_verdict_change` + `PUT /users/me/notification-prefs`.
+- **검색**: **제목만** (토픽 title + 명제 text) — **확정**; 본문/댓글 검색은 범위 외.
+- **링크 미리보기**: URL 증거에 OG **title / site / thumbnail** — 서버 async fetch + SSRF guards; 썸네일 MVP는 **R2 clean bucket 복사** + presigned URL.
 
 ## 7. 아직 열린 결정
 
-- R2 custom domain / CDN (Phase 2)
-- LDNOOBW 외 금지어·검색 본문 확장
-- Push **opt-out** 설정 UI
-- OpenGraph 링크 미리보기 (Wayback과 별개)
+- R2 custom domain 공개 CDN (Phase 2)
+- Admin moderation **UI** (MVP는 신고·auto-hide·SQL unhide)
+- LDNOOBW 외 추가 금지어 소스 (선택)
 - (기타) [`BACKEND.md`](./BACKEND.md) §14
 
 ---

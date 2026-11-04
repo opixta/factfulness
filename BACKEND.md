@@ -122,6 +122,7 @@ CREATE TABLE users (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   external_id   TEXT NOT NULL UNIQUE,  -- Clerk/Supabase sub
   display_name  TEXT NOT NULL UNIQUE,  -- nickname: user-chosen, 2–20 chars (app rules)
+  notify_verdict_change BOOLEAN NOT NULL DEFAULT true,  -- push opt-out for verdict alerts
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -176,6 +177,11 @@ CREATE TABLE evidence (
   archive_url     TEXT,
   archived_at     TIMESTAMPTZ,
   archive_status  TEXT CHECK (archive_status IN ('pending','success','failed')),
+  og_title        TEXT,
+  og_site_name    TEXT,
+  og_image_url    TEXT,          -- presigned URL or CDN path after R2 copy
+  og_image_key    TEXT,          -- R2 object key when copied to clean bucket
+  preview_status  TEXT CHECK (preview_status IN ('pending','success','failed')),
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -308,6 +314,10 @@ interface EvidenceDto {
   archiveUrl?: string;
   archivedAt?: string;
   archiveStatus?: "pending" | "success" | "failed";
+  ogTitle?: string;
+  ogSiteName?: string;
+  ogImageUrl?: string;
+  previewStatus?: "pending" | "success" | "failed";
 }
 
 interface CommentDto {
@@ -354,7 +364,7 @@ interface CommentDto {
 
 ### 4.3 Search (MVP — 확정)
 
-**Scope**: **title search only** — `topics.title` + `claims.text` (명제 “제목”). Evidence body, comments, summaries excluded in v1.
+**Scope**: **title search only (decided for MVP and v1.x)** — `topics.title` + `claims.text` only. Evidence summaries, comment bodies, and full-text search are **out of scope** (not on open list).
 
 ```
 GET /search?q={query}&limit=30
@@ -673,6 +683,33 @@ WAYBACK_JOB_MAX_RETRIES=5
 
 **Mobile**: `archiveUrl` / `archivedAt` / `archiveStatus` on `Evidence`; local repo simulates immediate success (`mobile/src/linkArchive/wayback.ts`).
 
+### 7.6 URL evidence — OpenGraph link preview (MVP — 확정)
+
+Runs **async** after evidence create (parallel with §7.5 Wayback job). Populates card fields for claim UI: **title**, **site name**, **thumbnail**.
+
+**Job flow**
+
+1. `preview_status='pending'` on insert (URL evidence only).
+2. Worker fetches page HTML with **SSRF-safe HTTP client**:
+   - Allow **http/https** only; follow redirects with max depth (e.g. 3).
+   - **Block** private/reserved IPs (10/8, 172.16/12, 192.168/16, 127/8, link-local, metadata endpoints) — resolve DNS first, reject before connect.
+   - **Timeouts**: connect 5s, read 10s; max response **512 KiB** for HTML sniff.
+3. Parse OpenGraph / Twitter Card / `<title>` fallback → `og_title`, `og_site_name`.
+4. **Thumbnail (MVP default)**: download `og:image` (same SSRF rules, max **2 MiB**, image/* only) → **copy to `R2_EVIDENCE_BUCKET`** at `link-previews/{evidence_id}/og.jpg` → store `og_image_key`; API returns **presigned GET** in `og_image_url` (aligns with §7.4 presigned delivery).
+   - **Alternative (Phase 2)**: same-origin **image proxy** through API — not MVP default (hotlink + SSRF surface).
+5. `preview_status='success'` or `'failed'` (UI fallback: URL text only).
+
+**Env (예)**
+
+```
+OG_FETCH_ENABLED=true
+OG_FETCH_MAX_HTML_BYTES=524288
+OG_IMAGE_MAX_BYTES=2097152
+OG_JOB_MAX_RETRIES=3
+```
+
+**Mobile**: `ogTitle`, `ogSiteName`, `ogImageUrl`, `previewStatus`; seed + local sim (`mobile/src/linkPreview/simulatePreview.ts`); `EvidenceLinkPreview` component.
+
 ---
 
 ## 8. 시드 · 마이그레이션
@@ -744,13 +781,27 @@ CREATE TABLE push_tokens (
 
 **Delivery**: Worker loads tokens for participant user ids → Expo Push API (`https://exp.host/--/api/v2/push/send`). Payload example: `{ title: "Verdict updated", body: "…", data: { claimId } }`.
 
-**Opt-in (mobile)**: `expo-notifications` — request permission on startup (after login in production); register token → `POST /users/me/push-token` (stub: `mobile/src/notifications/registerPush.ts` stores locally until API exists). User can deny; no notification without granted permission.
+**Opt-in / opt-out (mobile + server — 확정)**
+
+1. **OS permission** — `expo-notifications` (deny → no token).
+2. **In-app toggle** — `(tabs)/settings` → **판정 변경 알림**; persisted locally (`notificationPrefs.notifyVerdictChange`) until API sync.
+3. **Server field** — `users.notify_verdict_change BOOLEAN DEFAULT true`. Push worker **must skip** users where `notify_verdict_change = false` even if `push_tokens` row exists.
+
+**API**
+
+| Method | Path | Body | Notes |
+|--------|------|------|-------|
+| `PUT` | `/users/me/notification-prefs` | `{ "notifyVerdictChange": true \| false }` | Updates `users.notify_verdict_change` |
+| `GET` | `/users/me/notification-prefs` | — | Returns same shape |
+| `POST` | `/users/me/push-token` | `{ "expoToken": "...", "platform": "ios"\|"android" }` | Upsert `push_tokens` |
+
+**Mobile**: `registerPushNotificationsStub(prefs)` skips registration when opted out (`mobile/src/notifications/verdictPush.ts`).
 
 **작업 항목**
 
 - [ ] Server job on score history insert when status changes
 - [ ] Dedupe: one push per user per claim per status transition
-- [ ] Settings screen for opt-out (Phase 1.1 optional)
+- [x] In-app opt-out toggle (settings tab) — local persistence; wire to `PUT /users/me/notification-prefs` with API
 
 ---
 
@@ -922,7 +973,6 @@ Re-verify public `GET /claims/{id}` returns content after unhide.
 - [ ] **R2 public CDN** — custom domain on clean evidence bucket (§7.4)
 - [ ] File upload evidence (if not fully in Phase 1)
 - [ ] **Admin moderation UI** + admin hide APIs (MVP: auto-hide on reports + manual SQL unhide)
-- [ ] Link preview / OpenGraph (beyond Wayback snapshot URL)
 - [ ] (선택) websocket live scores
 
 ---
@@ -944,18 +994,17 @@ HANDOFF §6과 동일. Highlights:
 - [x] **Trust denied** on file evidence until `scan_status=clean` (pending/infected) — mobile `trustEligibility` + API `403`
 - [x] **Admin moderation MVP** — reports + auto-hide at threshold + `hidden_at`; **no admin screen**
 - [x] **Report auto-hide threshold** — default **3** distinct reporters (`REPORT_AUTO_HIDE_THRESHOLD`)
-- [x] **Title search** in MVP — `GET /search?q=` + local `titleSearch` UI
-- [x] **Push notifications** on participated claim **verdict status change** (Expo tokens + opt-in stub)
+- [x] **Title search scope** — topic title + claim text **only** (decided; no body/full-text in MVP)
+- [x] **Push opt-out** — settings toggle + `users.notify_verdict_change` + `PUT /users/me/notification-prefs`
+- [x] **URL evidence link preview** — OpenGraph job + R2 thumbnail copy (MVP) + mobile preview card
 - [x] **Wayback archive** for evidence URLs (async job; `archive_*` fields)
 - [x] **Open-source licenses screen** — LDNOOBW CC BY 4.0 (`/licenses`)
 
 ## 14. 아직 열린 결정
 
-- [ ] R2 **custom domain** hostname / TLS / cache policy details (Phase 2)
-- [ ] Additional banned-word sources beyond LDNOOBW
-- [ ] Push notification **opt-out settings UI** (permission stub exists)
-- [ ] Search: full-text on evidence/comment bodies (MVP is title-only)
-- [ ] OpenGraph / rich link preview (Wayback snapshot is not OG)
+- [ ] R2 **custom domain** public CDN for clean bucket (Phase 2 — §7.4)
+- [ ] **Admin moderation UI** (reports/auto-hide + SQL unhide cover MVP)
+- [ ] Additional banned-word list sources beyond LDNOOBW (optional expansion)
 
 ---
 
@@ -974,7 +1023,9 @@ HANDOFF §6과 동일. Highlights:
 | `mobile/src/moderation/bannedWords.generated.ts` | Generated word list (run build script) |
 | `mobile/src/search/titleSearch.ts` | MVP title search (local + server spec) |
 | `mobile/src/config/moderation.ts` | Report auto-hide threshold |
-| `mobile/src/notifications/registerPush.ts` | Expo push permission/token stub |
+| `mobile/src/notifications/verdictPush.ts` | Verdict push opt-in logic |
+| `mobile/src/linkPreview/simulatePreview.ts` | Local OG preview simulation |
+| `mobile/src/components/EvidenceLinkPreview.tsx` | URL evidence preview card |
 | `mobile/src/moderation/trustEligibility.ts` | Trust gating on file `scan_status` |
 | `mobile/src/app/*` | 화면별 repo 호출 |
 | [`HANDOFF.md`](./HANDOFF.md) | 제품·규칙·확정/열린 결정 |

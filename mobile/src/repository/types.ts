@@ -1,4 +1,5 @@
 import type { AppData, Claim, Comment, Evidence, Topic } from "@/data/types";
+import type { NotificationPrefs } from "@/config/notifications";
 
 export interface FactfulnessRepository {
   getData(): AppData;
@@ -40,6 +41,9 @@ export interface FactfulnessRepository {
 
   /** Local dev: store Expo push token from registration stub */
   setPushTokenDev(token: string | null): void;
+
+  getNotificationPrefs(): NotificationPrefs;
+  setNotificationPrefs(prefs: NotificationPrefs): void;
 
   /** Local / dev: bind actor for participants + comment author */
   setLocalUser(userId: string, nickname: string): void;

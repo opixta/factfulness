@@ -32,6 +32,13 @@ export default function TabLayout() {
           tabBarIcon: () => <BrandMark size={16} />,
         }}
       />
+      <Tabs.Screen
+        name="settings"
+        options={{
+          title: "설정",
+          tabBarIcon: () => <BrandMark size={16} />,
+        }}
+      />
     </Tabs>
   );
 }

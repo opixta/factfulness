@@ -1,7 +1,7 @@
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.db import get_db
@@ -12,6 +12,7 @@ from app.schemas.dto import (
     CommentIn,
     ContentReportIn,
     EvidenceIn,
+    FileEvidenceUploadIn,
     ProposeClaimIn,
     ProposeTopicIn,
     SearchHitOut,
@@ -19,6 +20,12 @@ from app.schemas.dto import (
     TopicListItem,
     VoteIn,
 )
+from app.services.file_evidence import (
+    create_file_upload,
+    presigned_download_url,
+    process_uploaded_file,
+)
+from app.services.rate_limit import rate_limit_evidence_create
 from app.services.bootstrap import build_bootstrap
 from app.services.link_enrichment import build_wayback_archive_url, site_name_from_url
 from app.services.recompute import recompute_claim, touch_topic_activity
@@ -151,6 +158,7 @@ def add_evidence(
     claim = db.get(Claim, claim_id)
     if not claim or claim.hidden_at:
         raise HTTPException(status.HTTP_404_NOT_FOUND)
+    rate_limit_evidence_create(str(auth.user.id))
     row = Evidence(
         claim_id=claim_id,
         user_id=auth.user.id,
@@ -323,3 +331,99 @@ def content_report(
     )
     db.commit()
     return {"distinctReports": distinct, "hidden": hidden}
+
+
+@router.post("/claims/{claim_id}/evidence/file/upload-url", status_code=status.HTTP_201_CREATED)
+def file_upload_url(
+    claim_id: uuid.UUID,
+    body: FileEvidenceUploadIn,
+    db: Session = Depends(get_db),
+    auth: CurrentUser = Depends(get_current_user),
+) -> dict:
+    claim = db.get(Claim, claim_id)
+    if not claim or claim.hidden_at:
+        raise HTTPException(status.HTTP_404_NOT_FOUND)
+    row, upload_url = create_file_upload(
+        db,
+        claim_id=claim_id,
+        user_id=auth.user.id,
+        title=body.title,
+        summary=body.summary,
+        stance=body.stance,
+        file_name=body.fileName,
+        file_mime=body.fileMime,
+        file_size=body.fileSize,
+    )
+    touch_topic_activity(db, claim.topic_id)
+    db.commit()
+    from app.config import settings
+
+    return {
+        "evidenceId": str(row.id),
+        "uploadUrl": upload_url,
+        "uploadHeaders": {"Content-Type": body.fileMime},
+        "expiresIn": settings.presigned_upload_ttl_seconds,
+    }
+
+
+def _run_scan(evidence_id: uuid.UUID) -> None:
+    from app.db import SessionLocal
+
+    db = SessionLocal()
+    try:
+        process_uploaded_file(db, evidence_id)
+        db.commit()
+    finally:
+        db.close()
+
+
+@router.post("/claims/{claim_id}/evidence/{evidence_id}/file/complete")
+def file_upload_complete(
+    claim_id: uuid.UUID,
+    evidence_id: uuid.UUID,
+    background: BackgroundTasks,
+    db: Session = Depends(get_db),
+    auth: CurrentUser = Depends(get_current_user),
+) -> dict:
+    row = db.get(Evidence, evidence_id)
+    if not row or row.claim_id != claim_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND)
+    if row.user_id != auth.user.id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN)
+    background.add_task(_run_scan, evidence_id)
+    db.commit()
+    from app.services.serialize import evidence_dto
+
+    return {"evidence": evidence_dto(db, row), "scanStatus": row.scan_status}
+
+
+@router.get("/evidence/{evidence_id}/file/scan-status")
+def file_scan_status(
+    evidence_id: uuid.UUID,
+    db: Session = Depends(get_db),
+) -> dict:
+    row = db.get(Evidence, evidence_id)
+    if not row or not row.file_mime:
+        raise HTTPException(status.HTTP_404_NOT_FOUND)
+    from app.services.serialize import evidence_dto
+
+    return {
+        "evidence": evidence_dto(db, row),
+        "scanStatus": row.scan_status,
+    }
+
+
+@router.get("/evidence/{evidence_id}/download-url")
+def evidence_download_url(
+    evidence_id: uuid.UUID,
+    db: Session = Depends(get_db),
+) -> dict:
+    row = db.get(Evidence, evidence_id)
+    if not row:
+        raise HTTPException(status.HTTP_404_NOT_FOUND)
+    url = presigned_download_url(row)
+    from app.config import settings
+    from datetime import datetime, timedelta, timezone
+
+    expires = datetime.now(timezone.utc) + timedelta(seconds=settings.presigned_download_ttl_seconds)
+    return {"url": url, "expiresAt": expires.isoformat()}

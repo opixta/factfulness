@@ -61,6 +61,11 @@ class EvidenceDto(BaseModel):
     stance: str
     summary: str
     trust: int
+    fileMime: str | None = None
+    fileSize: int | None = None
+    fileName: str | None = None
+    scanStatus: str | None = None
+    status: str = "active"
     ogTitle: str | None = None
     ogSiteName: str | None = None
     ogImageUrl: str | None = None
@@ -104,6 +109,15 @@ class EvidenceIn(BaseModel):
     url: str = ""
     stance: str
     summary: str
+
+
+class FileEvidenceUploadIn(BaseModel):
+    title: str = Field(min_length=1)
+    summary: str = Field(min_length=1)
+    stance: str
+    fileName: str = Field(min_length=1)
+    fileMime: str
+    fileSize: int = Field(gt=0)
 
 
 class CommentIn(BaseModel):

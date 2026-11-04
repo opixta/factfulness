@@ -98,6 +98,41 @@ Load into DB:
 cd backend && python scripts/seed_from_json.py
 ```
 
+## Phase 1 — file evidence (quarantine → ClamAV → clean)
+
+### Local stack (MinIO + ClamAV)
+
+From repo root:
+
+```bash
+docker compose up -d postgres minio minio-init clamav
+cd backend && cp .env.example .env
+# For presigned PUT from a phone/emulator, point S3 at MinIO:
+# STORAGE_BACKEND=s3
+# S3_ENDPOINT_URL=http://127.0.0.1:9000  (or host LAN IP on WSL2 — see below)
+pip install -e ".[dev]"
+alembic upgrade head && python scripts/seed_from_json.py
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+Or `docker compose --profile api up --build` (API + Postgres + MinIO + ClamAV).
+
+**WSL2:** bind uvicorn to `0.0.0.0`. From Windows/Android emulator use `http://10.0.2.2:8000` for API and ensure MinIO port `9000` is reachable (mirrored networking or `netsh portproxy` from Windows → WSL IP for physical devices uploading via presigned URLs).
+
+### Production Cloudflare R2 (later)
+
+Create **two** buckets (`factfulness-quarantine`, `factfulness-evidence`), R2 API token with Object Read & Write, set `STORAGE_BACKEND=s3` and `S3_ENDPOINT_URL=https://<account_id>.r2.cloudflarestorage.com`. Enable CORS on the quarantine bucket for mobile presigned PUT origins.
+
+### API flow
+
+1. `POST /v1/claims/{id}/evidence/file/upload-url` → presigned PUT to quarantine  
+2. Client PUT file  
+3. `POST .../file/complete` → background ClamAV scan  
+4. `GET /v1/evidence/{id}/file/scan-status` — poll until `clean` / `infected`  
+5. `GET /v1/evidence/{id}/download-url` — presigned GET from clean bucket only  
+
+Tests use `STORAGE_BACKEND=memory` and `SCANNER_BACKEND=fake` (default in code).
+
 ## Out of scope for Phase 0
 
 R2 uploads, ClamAV, and staging deploy remain Phase 1+ per `BACKEND.md` §12. Mobile can use `EXPO_PUBLIC_API_URL` to talk to this API (see above).

@@ -31,6 +31,16 @@ export interface FactfulnessRepository {
     input: { body: string; vote?: "" | "true" | "false" },
   ): Comment;
 
+  reportContent(input: {
+    targetType: "topic" | "claim" | "comment";
+    targetId: string;
+    claimId?: string;
+    reason?: string;
+  }): { distinctReports: number; autoHidden: boolean };
+
+  /** Local dev: store Expo push token from registration stub */
+  setPushTokenDev(token: string | null): void;
+
   /** Local / dev: bind actor for participants + comment author */
   setLocalUser(userId: string, nickname: string): void;
 

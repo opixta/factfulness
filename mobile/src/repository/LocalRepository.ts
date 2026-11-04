@@ -11,6 +11,13 @@ import {
 } from "@/repository/metrics";
 import { isCommentAllowed } from "@/moderation/bannedWords";
 import { canEndorseTrustEvidence } from "@/moderation/trustEligibility";
+import { shouldAutoHideContent } from "@/moderation/autoHide";
+import {
+  type ReportTargetType,
+  distinctReporterCount,
+  reportKey,
+} from "@/moderation/reportKeys";
+import { buildWaybackArchiveUrl } from "@/linkArchive/wayback";
 
 export class LocalFactfulnessRepository implements FactfulnessRepository {
   private data: AppData;
@@ -88,15 +95,21 @@ export class LocalFactfulnessRepository implements FactfulnessRepository {
   }
 
   getTopics(): Topic[] {
+    return this.data.topics.filter((t) => !t.hiddenAt);
+  }
+
+  getTopicsIncludingHidden(): Topic[] {
     return this.data.topics;
   }
 
   getTopic(id: string): Topic | undefined {
-    return this.data.topics.find((t) => t.id === id);
+    const topic = this.data.topics.find((t) => t.id === id);
+    if (topic?.hiddenAt) return undefined;
+    return topic;
   }
 
   getClaims(topicId: string): Claim[] {
-    return this.data.claims[topicId] ?? [];
+    return (this.data.claims[topicId] ?? []).filter((c) => !c.hiddenAt);
   }
 
   findClaim(claimId: string): { topicId: string; claim: Claim } | null {
@@ -112,7 +125,7 @@ export class LocalFactfulnessRepository implements FactfulnessRepository {
   }
 
   getComments(claimId: string): Comment[] {
-    return this.data.comments[claimId] ?? [];
+    return (this.data.comments[claimId] ?? []).filter((c) => !c.hiddenAt);
   }
 
   proposeTopic(input: {
@@ -217,6 +230,12 @@ export class LocalFactfulnessRepository implements FactfulnessRepository {
       // Local dev simulates post-scan; API sets pending until ClamAV clean.
       item.fileScanStatus = "clean";
     }
+    if (item.url?.trim()) {
+      const now = new Date();
+      item.archiveStatus = "success";
+      item.archivedAt = now.toISOString();
+      item.archiveUrl = buildWaybackArchiveUrl(item.url, now);
+    }
     if (!this.data.evidence[claimId]) this.data.evidence[claimId] = [];
     this.data.evidence[claimId].unshift(item);
     if (found) {
@@ -256,5 +275,60 @@ export class LocalFactfulnessRepository implements FactfulnessRepository {
     }
     this.notify();
     return item;
+  }
+
+  reportContent(input: {
+    targetType: ReportTargetType;
+    targetId: string;
+    claimId?: string;
+    reason?: string;
+  }): { distinctReports: number; autoHidden: boolean } {
+    const key = reportKey(input.targetType, input.targetId, input.claimId);
+    if (!this.data.contentReports[key]) {
+      this.data.contentReports[key] = [];
+    }
+    const list = this.data.contentReports[key];
+    if (!list.includes(this.actorUserId)) {
+      list.push(this.actorUserId);
+    }
+    const distinctReports = distinctReporterCount(list);
+    let autoHidden = false;
+    if (shouldAutoHideContent(list)) {
+      autoHidden = this.applyAutoHide(input.targetType, input.targetId, input.claimId);
+    }
+    this.notify();
+    return { distinctReports, autoHidden };
+  }
+
+  setPushTokenDev(token: string | null): void {
+    this.data.pushTokenDev = token ?? undefined;
+    this.notify();
+  }
+
+  private applyAutoHide(
+    targetType: ReportTargetType,
+    targetId: string,
+    claimId?: string,
+  ): boolean {
+    const now = new Date().toISOString();
+    if (targetType === "topic") {
+      const topic = this.data.topics.find((t) => t.id === targetId);
+      if (!topic || topic.hiddenAt) return Boolean(topic?.hiddenAt);
+      topic.hiddenAt = now;
+      return true;
+    }
+    if (targetType === "claim") {
+      const found = this.findClaim(targetId);
+      if (!found?.claim || found.claim.hiddenAt) return Boolean(found?.claim.hiddenAt);
+      found.claim.hiddenAt = now;
+      return true;
+    }
+    if (targetType === "comment" && claimId) {
+      const comment = (this.data.comments[claimId] ?? []).find((c) => c.id === targetId);
+      if (!comment || comment.hiddenAt) return Boolean(comment?.hiddenAt);
+      comment.hiddenAt = now;
+      return true;
+    }
+    return false;
   }
 }

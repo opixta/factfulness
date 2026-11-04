@@ -10,6 +10,8 @@ export interface Topic {
   updatedAt: string;
   /** ISO8601 — topic creation (derived “신규” tag) */
   createdAt: string;
+  /** Set when auto-hidden by report threshold or manual moderation */
+  hiddenAt?: string;
 }
 
 export interface Claim {
@@ -19,6 +21,7 @@ export interface Claim {
   votesTrue: number;
   votesFalse: number;
   userVote?: "true" | "false";
+  hiddenAt?: string;
 }
 
 export interface Evidence {
@@ -34,6 +37,10 @@ export interface Evidence {
   localFileUri?: string;
   /** File uploads only — URL evidence ignores scan. Server: ClamAV pipeline. */
   fileScanStatus?: "pending" | "clean" | "infected";
+  /** Wayback Machine archive (URL evidence only) */
+  archiveUrl?: string;
+  archivedAt?: string;
+  archiveStatus?: "pending" | "success" | "failed";
 }
 
 export interface Comment {
@@ -42,6 +49,7 @@ export interface Comment {
   body: string;
   vote?: "" | "true" | "false";
   at: string;
+  hiddenAt?: string;
 }
 
 export interface ClaimScoreHistoryEntry {
@@ -69,9 +77,13 @@ export interface AppData {
   topicParticipantUserIds: Record<string, string[]>;
   claimScoreHistory: Record<string, ClaimScoreHistoryEntry[]>;
   localUserId: string;
+  /** reportKey → distinct reporter user ids (see moderation/reportKeys) */
+  contentReports: Record<string, string[]>;
+  /** Local dev: last Expo push token from registration stub */
+  pushTokenDev?: string;
 }
 
-export const STORAGE_KEY = "@factfulness/app-data-v2";
+export const STORAGE_KEY = "@factfulness/app-data-v3";
 
 export const NEW_TOPIC_DAYS = 7;
 

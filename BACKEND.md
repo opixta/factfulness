@@ -144,6 +144,7 @@ CREATE TABLE claims (
   text        TEXT NOT NULL,
   reason      TEXT,
   created_by  UUID REFERENCES users(id),
+  hidden_at   TIMESTAMPTZ,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -172,6 +173,9 @@ CREATE TABLE evidence (
   file_key    TEXT,              -- promoted after scan_status=clean; C1 file source
   stance      TEXT NOT NULL CHECK (stance IN ('true','false','neutral')),
   summary     TEXT NOT NULL,
+  archive_url     TEXT,
+  archived_at     TIMESTAMPTZ,
+  archive_status  TEXT CHECK (archive_status IN ('pending','success','failed')),
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -188,6 +192,7 @@ CREATE TABLE comments (
   user_id      UUID NOT NULL REFERENCES users(id),
   body         TEXT NOT NULL,
   linked_vote  BOOLEAN,          -- NULL = 없음; true/false
+  hidden_at    TIMESTAMPTZ,
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -201,6 +206,9 @@ CREATE TABLE content_reports (
   resolved_at  TIMESTAMPTZ,
   action       TEXT              -- hide|dismiss — MVP: hide hook
 );
+
+CREATE UNIQUE INDEX content_reports_distinct_reporter_idx
+  ON content_reports (target_type, target_id, reporter_id);
 
 CREATE TABLE claim_score_history (
   id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -297,6 +305,9 @@ interface EvidenceDto {
   trust: number;
   eligible: boolean;       // C1+C2+non-neutral; mobile isEvidenceEligible
   userHasTrusted?: boolean;
+  archiveUrl?: string;
+  archivedAt?: string;
+  archiveStatus?: "pending" | "success" | "failed";
 }
 
 interface CommentDto {
@@ -318,6 +329,7 @@ interface CommentDto {
 | `findClaim` + evidence + comments | `claim/[id]` | `GET /claims/{claimId}` | `{ topicId, claim, scores, evidence[], comments[] }` |
 | `getEvidence` | claim | ↑ | detail에 포함 |
 | `getComments` | claim | ↑ | detail에 포함 |
+| `search` | `(tabs)/index` search bar | `GET /search?q=` | `{ hits: SearchHit[] }` — §4.4 |
 | `getData()` | (로컬 전용 bulk) | **제공 안 함** 또는 `GET /bootstrap` (admin/dev only) | 프로덕션 앱은 granular GET + mutation 후 invalidate |
 
 **TopicListItem 예시**
@@ -340,7 +352,35 @@ interface CommentDto {
 - [ ] 목록/상세에서 **클라이언트 factScore 호출 제거**할 수 있도록 scores 항상 포함
 - [ ] 페이지네이션: `GET /topics?cursor=` (초기는 offset 허용)
 
-### 4.3 Write API ↔ mutation · 화면
+### 4.3 Search (MVP — 확정)
+
+**Scope**: **title search only** — `topics.title` + `claims.text` (명제 “제목”). Evidence body, comments, summaries excluded in v1.
+
+```
+GET /search?q={query}&limit=30
+Authorization: optional (same visibility as public read; hidden content excluded)
+```
+
+**Response**
+
+```json
+{
+  "hits": [
+    { "type": "topic", "topicId": "...", "title": "...", "snippet": null },
+    { "type": "claim", "topicId": "...", "claimId": "...", "title": "claim text..." }
+  ]
+}
+```
+
+**Postgres implementation (MVP default)**
+
+- Extension: **`pg_trgm`** on `topics.title`, `claims.text` for fuzzy/substring match, **or** `ILIKE '%' || q || '%'` for simpler deploy (Korean: use DB locale `ko_KR.UTF-8`, normalize NFC on write).
+- **Korean**: prefer **`unaccent` off**; match on normalized Unicode (NFKC) in app **or** `lower(title)` with C locale limitations — document that server applies same `normalizeSearchQuery` as mobile (`mobile/src/search/titleSearch.ts`).
+- Index: `GIN (title gin_trgm_ops)` when using pg_trgm; cap `limit` ≤ 50.
+
+**Mobile**: local filter via `searchTopicsAndClaims()` until `ApiRepository` wires `GET /search`.
+
+### 4.4 Write API ↔ mutation · 화면
 
 | Repository | 화면 | Method & Path | Request body | Response |
 |------------|------|---------------|--------------|----------|
@@ -363,7 +403,7 @@ interface CommentDto {
 - [ ] `recompute_claim`: **INSERT** into `claim_score_history` then **UPSERT** `claim_scores` (every recompute)
 - [ ] topic `updated_at` + participant_count refresh on vote/evidence/comment/trust
 
-### 4.4 점수 규칙 설명 화면
+### 4.5 점수 규칙 설명 화면
 
 | 화면 | API 필요 |
 |------|----------|
@@ -614,6 +654,25 @@ PRESIGNED_DOWNLOAD_TTL_SECONDS=900
 - [ ] Max size **10MB**
 - [ ] ClamAV pipeline (§7.1) + Alembic columns in §3.2
 
+### 7.5 URL evidence — Wayback archive (MVP — 확정)
+
+After **`POST /claims/{id}/evidence`** with non-empty `url`:
+
+1. Insert evidence row; set `archive_status='pending'`.
+2. Enqueue **async job** → [Internet Archive Save Page Now](https://web.archive.org/save/) (respect IA rate limits; exponential backoff, max retries e.g. 5).
+3. On success: `archive_status='success'`, `archive_url` = snapshot URL, `archived_at=now()`.
+4. On permanent failure: `archive_status='failed'` (evidence stays active; UI shows live URL only).
+
+**Env (예)**
+
+```
+WAYBACK_SAVE_ENABLED=true
+WAYBACK_MAX_REQUESTS_PER_MIN=15
+WAYBACK_JOB_MAX_RETRIES=5
+```
+
+**Mobile**: `archiveUrl` / `archivedAt` / `archiveStatus` on `Evidence`; local repo simulates immediate success (`mobile/src/linkArchive/wayback.ts`).
+
 ---
 
 ## 8. 시드 · 마이그레이션
@@ -665,6 +724,34 @@ EXPO_PUBLIC_AUTH_...=...
 - [ ] `app.config.ts` extra fields
 - [ ] EAS build profiles: dev / staging / production API URL
 
+### 9.5 Push notifications — verdict changes (MVP — 확정)
+
+**Trigger**: On claim **recompute**, compare previous vs new `fact_status` in `claim_scores` (or last `claim_score_history` row). If **`fact_status` changed** (e.g. `pending` → `fact`), notify users who **participated** on that claim: vote, evidence, comment, or trust.
+
+**Participation set**: DISTINCT `user_id` from `votes`, `evidence`, `comments`, `evidence_trust` (join evidence on claim).
+
+**Expo push tokens**
+
+```sql
+CREATE TABLE push_tokens (
+  user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  expo_token  TEXT NOT NULL,
+  platform    TEXT,  -- ios|android
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, expo_token)
+);
+```
+
+**Delivery**: Worker loads tokens for participant user ids → Expo Push API (`https://exp.host/--/api/v2/push/send`). Payload example: `{ title: "Verdict updated", body: "…", data: { claimId } }`.
+
+**Opt-in (mobile)**: `expo-notifications` — request permission on startup (after login in production); register token → `POST /users/me/push-token` (stub: `mobile/src/notifications/registerPush.ts` stores locally until API exists). User can deny; no notification without granted permission.
+
+**작업 항목**
+
+- [ ] Server job on score history insert when status changes
+- [ ] Dedupe: one push per user per claim per status transition
+- [ ] Settings screen for opt-out (Phase 1.1 optional)
+
 ---
 
 ## 10. 배포 · 환경 · 설정
@@ -693,6 +780,7 @@ RATE_LIMIT_COMMENT_PER_USER_PER_MIN=20
 RATE_LIMIT_TOPIC_CREATE_PER_USER_PER_HOUR=5
 RATE_LIMIT_CLAIM_CREATE_PER_USER_PER_HOUR=20
 RATE_LIMIT_EVIDENCE_CREATE_PER_USER_PER_HOUR=30
+REPORT_AUTO_HIDE_THRESHOLD=3
 ```
 
 **Rate limits (decided)**: 위 값은 **프로덕션 기본**이며 `mobile/src/config/rateLimits.ts`와 동기화한다. 초기 출시 후에도 변경 시 문서·env·모바일 상수를 함께 bump.
@@ -768,6 +856,40 @@ Manual exclusions (false positives): `scripts/banned-words-exclusions.json` (cur
 
 - Admin moderation dashboard + `PATCH /admin/.../hide` tooling (see §12).
 
+### 11.2 신고 → 자동 숨김 (MVP — 확정)
+
+Until admin UI exists, crossing a **report count threshold** sets **`hidden_at`** automatically (no manual review queue in MVP).
+
+| Rule | Value |
+|------|--------|
+| Count | **Distinct reporters** only (`UNIQUE (target_type, target_id, reporter_id)`) |
+| Default threshold | **`3`** — env `REPORT_AUTO_HIDE_THRESHOLD` (tunable per environment) |
+| Targets | `topic`, `claim`, `comment` (extend to `evidence` same pattern) |
+| Effect | `hidden_at = now()` on target row; excluded from public GET/list (same as manual hide) |
+
+**API**: `POST /content/report` body `{ targetType, targetId, reason? }` → `{ distinctReports, hidden: boolean }`.
+
+**Mobile**: `mobile/src/config/moderation.ts` (`REPORT_AUTO_HIDE_THRESHOLD`); `LocalRepository.reportContent()` mirrors server.
+
+**Runbook — unhide via DB (staging/production until admin UI)**
+
+```sql
+-- Claim example (replace ids)
+UPDATE claims SET hidden_at = NULL WHERE id = '<claim_uuid>';
+
+-- Topic
+UPDATE topics SET hidden_at = NULL WHERE id = '<topic_uuid>';
+
+-- Comment
+UPDATE comments SET hidden_at = NULL WHERE id = '<comment_uuid>';
+
+-- Optional: dismiss reports (audit trail)
+UPDATE content_reports SET action = 'dismiss', resolved_at = now()
+  WHERE target_type = 'claim' AND target_id = '<claim_uuid>' AND resolved_at IS NULL;
+```
+
+Re-verify public `GET /claims/{id}` returns content after unhide.
+
 **Moderation hooks (스키마 — MVP)**
 
 - [ ] `content_reports` + `hidden_at` on topics/claims/comments/evidence
@@ -790,7 +912,8 @@ Manual exclusions (false positives): `scripts/banned-words-exclusions.json` (cur
 
 - [ ] Auth 벤더 연동 + 401 UX in app
 - [ ] Rate limits
-- [ ] Seed on staging; 제품 결정 반영 (댓글 vote, LDNOOBW banned words, reports/`hidden_at`)
+- [ ] Seed on staging; search, Wayback archive, push tokens, report auto-hide
+- [ ] **Title search** `GET /search` (§4.3)
 - [ ] **R2 two-bucket** upload + **presigned download only** (§7.3–7.4)
 - [ ] 클라이언트 `factScore` / home settled 계산 제거
 
@@ -798,9 +921,8 @@ Manual exclusions (false positives): `scripts/banned-words-exclusions.json` (cur
 
 - [ ] **R2 public CDN** — custom domain on clean evidence bucket (§7.4)
 - [ ] File upload evidence (if not fully in Phase 1)
-- [ ] **Admin moderation UI** + admin hide APIs (MVP is reports + `hidden_at` only, no screen)
-- [ ] Link archive / preview (OpenGraph)
-- [ ] Search, notifications
+- [ ] **Admin moderation UI** + admin hide APIs (MVP: auto-hide on reports + manual SQL unhide)
+- [ ] Link preview / OpenGraph (beyond Wayback snapshot URL)
 - [ ] (선택) websocket live scores
 
 ---
@@ -820,14 +942,20 @@ HANDOFF §6과 동일. Highlights:
 - [x] **Comment banned-word filter** — LDNOOBW en+ko (CC BY 4.0), build script — §11.1
 - [x] **No offline mutation queue** — fail + retry UX — §9.3
 - [x] **Trust denied** on file evidence until `scan_status=clean` (pending/infected) — mobile `trustEligibility` + API `403`
-- [x] **Admin moderation MVP** — user reports + `hidden_at` only; **no admin screen** (Phase 2 tooling)
+- [x] **Admin moderation MVP** — reports + auto-hide at threshold + `hidden_at`; **no admin screen**
+- [x] **Report auto-hide threshold** — default **3** distinct reporters (`REPORT_AUTO_HIDE_THRESHOLD`)
+- [x] **Title search** in MVP — `GET /search?q=` + local `titleSearch` UI
+- [x] **Push notifications** on participated claim **verdict status change** (Expo tokens + opt-in stub)
+- [x] **Wayback archive** for evidence URLs (async job; `archive_*` fields)
+- [x] **Open-source licenses screen** — LDNOOBW CC BY 4.0 (`/licenses`)
 
 ## 14. 아직 열린 결정
 
 - [ ] R2 **custom domain** hostname / TLS / cache policy details (Phase 2)
-- [ ] Additional banned-word sources or locale-specific lists beyond LDNOOBW (if community needs stricter KO coverage)
-- [ ] Link archive / preview (OpenGraph), search, notifications
-- [ ] Internal ops workflow for `hidden_at` before admin UI exists (runbook only)
+- [ ] Additional banned-word sources beyond LDNOOBW
+- [ ] Push notification **opt-out settings UI** (permission stub exists)
+- [ ] Search: full-text on evidence/comment bodies (MVP is title-only)
+- [ ] OpenGraph / rich link preview (Wayback snapshot is not OG)
 
 ---
 
@@ -844,7 +972,9 @@ HANDOFF §6과 동일. Highlights:
 | `third_party/ldnoobw/` | Vendored LDNOOBW sources + CC BY attribution |
 | `mobile/src/moderation/bannedWords.ts` | Match helpers (word boundary vs Hangul substring) |
 | `mobile/src/moderation/bannedWords.generated.ts` | Generated word list (run build script) |
-| `mobile/src/moderation/trustEligibility.ts` | Trust gating on file `scan_status` |
+| `mobile/src/search/titleSearch.ts` | MVP title search (local + server spec) |
+| `mobile/src/config/moderation.ts` | Report auto-hide threshold |
+| `mobile/src/notifications/registerPush.ts` | Expo push permission/token stub |
 | `mobile/src/app/*` | 화면별 repo 호출 |
 | [`HANDOFF.md`](./HANDOFF.md) | 제품·규칙·확정/열린 결정 |
 

@@ -191,6 +191,7 @@ export const seedData: AppData = {
   },
   claimScoreHistory: {},
   localUserId: "local_user",
+  contentReports: {},
 };
 
 export function cloneSeedData(): AppData {
@@ -212,6 +213,9 @@ export function migrateAppData(raw: Partial<AppData> & Record<string, unknown>):
     claimScoreHistory:
       (raw.claimScoreHistory as AppData["claimScoreHistory"]) ?? {},
     localUserId: (raw.localUserId as string) ?? base.localUserId,
+    contentReports:
+      (raw.contentReports as AppData["contentReports"]) ?? {},
+    pushTokenDev: raw.pushTokenDev as string | undefined,
   };
   for (const t of merged.topics) {
     if (!t.createdAt) {

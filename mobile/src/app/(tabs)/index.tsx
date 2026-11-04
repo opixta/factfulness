@@ -1,5 +1,6 @@
 import { router } from "expo-router";
-import { FlatList, Pressable, StyleSheet, Text, View } from "react-native";
+import { useMemo, useState } from "react";
+import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { Card, Screen } from "@/components/layout";
@@ -8,17 +9,40 @@ import { topicDisplayTags, topicUpdatedLabel } from "@/data/topicDisplay";
 import { useFactfulness } from "@/context/FactfulnessContext";
 import { factScore } from "@/scoring";
 import { evidenceInputsFromList } from "@/scoring/evidenceInput";
-import { Colors, Fonts, Spacing } from "@/theme/brand";
+import { searchTopicsAndClaims, type TitleSearchHit } from "@/search/titleSearch";
+import { Colors, Fonts, Radius, Spacing } from "@/theme/brand";
 
 export default function HomeScreen() {
   const { repo } = useFactfulness();
+  const [searchQuery, setSearchQuery] = useState("");
   const topics = repo.getTopics();
+
+  const claimsByTopic = useMemo(() => {
+    const map: Record<string, ReturnType<typeof repo.getClaims>> = {};
+    for (const t of topics) {
+      map[t.id] = repo.getClaims(t.id);
+    }
+    return map;
+  }, [repo, topics]);
+
+  const searchHits = useMemo(
+    () => searchTopicsAndClaims(topics, claimsByTopic, searchQuery),
+    [topics, claimsByTopic, searchQuery],
+  );
+
+  const searching = Boolean(searchQuery.trim());
+
+  const listData: TitleSearchHit[] = searching
+    ? searchHits
+    : topics.map((t) => ({ topic: t }));
 
   return (
     <Screen>
       <FlatList
-        data={topics}
-        keyExtractor={(t) => t.id}
+        data={listData}
+        keyExtractor={(item, index) =>
+          item.claim ? `claim-${item.claim.id}` : `topic-${item.topic.id}-${index}`
+        }
         contentContainerStyle={styles.list}
         ListHeaderComponent={
           <View style={styles.hero}>
@@ -40,18 +64,37 @@ export default function HomeScreen() {
                 사람들이 증거를 모으고 있는 공개 검증입니다.
               </Text>
             </View>
+            <TextInput
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              placeholder="토픽·명제 제목 검색"
+              placeholderTextColor={Colors.inkSoft}
+              style={styles.searchInput}
+              autoCapitalize="none"
+              clearButtonMode="while-editing"
+            />
           </View>
         }
-        renderItem={({ item: t }) => {
-          const claims = repo.getClaims(t.id);
+        renderItem={({ item }) => {
+          const t = item.topic;
+          const claim = item.claim;
+          const claims = claimsByTopic[t.id] ?? [];
           const settled = claims.filter((c) => {
             const fs = factScore(evidenceInputsFromList(repo.getEvidence(c.id)));
             return fs.status === "fact" || fs.status === "lie";
           }).length;
 
+          const onPress = () => {
+            if (claim) router.push(`/claim/${claim.id}`);
+            else router.push(`/topic/${t.id}`);
+          };
+
           return (
-            <Pressable onPress={() => router.push(`/topic/${t.id}`)}>
+            <Pressable onPress={onPress}>
               <Card>
+                {searching && claim ? (
+                  <Text style={styles.searchHitLabel}>명제 · {t.title}</Text>
+                ) : null}
                 <View style={styles.metaRow}>
                   {topicDisplayTags(t).map((tag) => (
                     <Pill key={tag} label={tag} />
@@ -60,13 +103,17 @@ export default function HomeScreen() {
                 <Text style={styles.metaText}>
                   {t.participants}명 참여 · 업데이트 {topicUpdatedLabel(t)}
                 </Text>
-                <Text style={styles.topicTitle}>{t.title}</Text>
-                <Text style={styles.summary} numberOfLines={3}>
-                  {t.summary}
-                </Text>
-                <Text style={styles.metaText}>
-                  세부 명제 {claims.length}개 · Fact/Lie 확정 {settled}/{claims.length}
-                </Text>
+                <Text style={styles.topicTitle}>{claim ? claim.text : t.title}</Text>
+                {!claim ? (
+                  <Text style={styles.summary} numberOfLines={3}>
+                    {t.summary}
+                  </Text>
+                ) : null}
+                {!claim ? (
+                  <Text style={styles.metaText}>
+                    세부 명제 {claims.length}개 · Fact/Lie 확정 {settled}/{claims.length}
+                  </Text>
+                ) : null}
               </Card>
             </Pressable>
           );
@@ -123,6 +170,23 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: Colors.inkSoft,
     marginTop: 4,
+    marginBottom: Spacing.sm,
+  },
+  searchInput: {
+    borderWidth: 1,
+    borderColor: Colors.line,
+    borderRadius: Radius.pill,
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.sm,
+    fontFamily: Fonts.ui,
+    backgroundColor: Colors.white,
+    marginBottom: Spacing.md,
+  },
+  searchHitLabel: {
+    fontFamily: Fonts.uiMedium,
+    fontSize: 12,
+    color: Colors.teal,
+    marginBottom: 6,
   },
   metaRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 6 },
   metaText: {

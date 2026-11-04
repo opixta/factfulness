@@ -1,11 +1,15 @@
 import { TRUST_MIN } from "./config";
 import type { EvidenceInput } from "./types";
 
-/** C1 (URL present) + C2 (trust >= TRUST_MIN). Neutral never counts toward fact score. */
+export function hasEvidenceSource(e: EvidenceInput): boolean {
+  return Boolean(e.url?.trim()) || Boolean(e.fileId);
+}
+
+/** C1 (URL or file) + C2 (trust >= TRUST_MIN). Neutral never counts toward fact score. */
 export function isEvidenceEligible(evidence: EvidenceInput): boolean {
   return (
     evidence.stance !== "neutral" &&
-    Boolean(evidence.url) &&
+    hasEvidenceSource(evidence) &&
     evidence.trust >= TRUST_MIN
   );
 }

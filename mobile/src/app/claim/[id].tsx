@@ -1,3 +1,4 @@
+import * as DocumentPicker from "expo-document-picker";
 import * as WebBrowser from "expo-web-browser";
 import { router, useLocalSearchParams } from "expo-router";
 import { useState } from "react";
@@ -12,13 +13,16 @@ import {
   View,
 } from "react-native";
 
+import { LinkedText } from "@/components/LinkedText";
 import { Card, Screen } from "@/components/layout";
 import { factLabel, ScorePair } from "@/components/ScorePair";
 import { EligibleBadge, StanceBadge } from "@/components/StanceBadge";
 import { StatusBadge } from "@/components/StatusBadge";
 import { GhostButton, PrimaryButton } from "@/components/ui";
+import { ALLOWED_EVIDENCE_MIMES, MAX_EVIDENCE_FILE_BYTES } from "@/data/types";
 import { useClaimScores, useFactfulness } from "@/context/FactfulnessContext";
 import { isEvidenceEligible, TRUST_MIN } from "@/scoring";
+import { toEvidenceInput } from "@/scoring/evidenceInput";
 import type { Stance } from "@/scoring/types";
 import { Colors, Fonts, Radius, Spacing } from "@/theme/brand";
 
@@ -32,6 +36,10 @@ export default function ClaimScreen() {
   const [evUrl, setEvUrl] = useState("");
   const [evSummary, setEvSummary] = useState("");
   const [evStance, setEvStance] = useState<Stance>("true");
+  const [evFileName, setEvFileName] = useState<string | undefined>();
+  const [evFileMime, setEvFileMime] = useState<string | undefined>();
+  const [evFileUri, setEvFileUri] = useState<string | undefined>();
+  const [evFileError, setEvFileError] = useState<string | null>(null);
   const [commentBody, setCommentBody] = useState("");
   const [commentVote, setCommentVote] = useState<"" | "true" | "false">("");
 
@@ -52,17 +60,48 @@ export default function ClaimScreen() {
     : fact.reasons.join(" ");
 
   const submitEvidence = () => {
-    if (!evTitle.trim() || !evUrl.trim() || !evSummary.trim()) return;
+    const hasUrl = Boolean(evUrl.trim());
+    const hasFile = Boolean(evFileUri && evFileName);
+    if (!evTitle.trim() || !evSummary.trim() || (!hasUrl && !hasFile)) return;
     repo.addEvidence(id, {
       title: evTitle.trim(),
-      url: evUrl.trim(),
+      url: hasUrl ? evUrl.trim() : "",
       stance: evStance,
       summary: evSummary.trim(),
+      fileName: evFileName,
+      fileMime: evFileMime,
+      localFileUri: evFileUri,
     });
     setEvTitle("");
     setEvUrl("");
     setEvSummary("");
     setEvStance("true");
+    setEvFileName(undefined);
+    setEvFileMime(undefined);
+    setEvFileUri(undefined);
+    setEvFileError(null);
+  };
+
+  const pickEvidenceFile = async () => {
+    setEvFileError(null);
+    const result = await DocumentPicker.getDocumentAsync({
+      type: [...ALLOWED_EVIDENCE_MIMES],
+      copyToCacheDirectory: true,
+    });
+    if (result.canceled) return;
+    const file = result.assets[0];
+    if (!file) return;
+    if (file.size != null && file.size > MAX_EVIDENCE_FILE_BYTES) {
+      setEvFileError("파일은 10MB 이하여야 합니다.");
+      return;
+    }
+    if (file.mimeType && !ALLOWED_EVIDENCE_MIMES.includes(file.mimeType as (typeof ALLOWED_EVIDENCE_MIMES)[number])) {
+      setEvFileError("이미지 또는 PDF만 업로드할 수 있습니다.");
+      return;
+    }
+    setEvFileName(file.name);
+    setEvFileMime(file.mimeType ?? "application/octet-stream");
+    setEvFileUri(file.uri);
   };
 
   const submitComment = () => {
@@ -118,12 +157,7 @@ export default function ClaimScreen() {
           <Text style={styles.sectionSub}>출처가 있는 자료만 팩트 점수에 반영됩니다.</Text>
 
           {evidence.map((e) => {
-            const eligible = isEvidenceEligible({
-              id: e.id,
-              url: e.url,
-              stance: e.stance,
-              trust: e.trust,
-            });
+            const eligible = isEvidenceEligible(toEvidenceInput(e));
             return (
               <Card key={e.id}>
                 <Text style={styles.evTitle}>{e.title}</Text>
@@ -132,9 +166,13 @@ export default function ClaimScreen() {
                   <EligibleBadge eligible={eligible} />
                 </View>
                 <Text style={styles.body}>{e.summary}</Text>
-                <Pressable onPress={() => void WebBrowser.openBrowserAsync(e.url)}>
-                  <Text style={styles.link}>{e.url}</Text>
-                </Pressable>
+                {e.url ? (
+                  <Pressable onPress={() => void WebBrowser.openBrowserAsync(e.url)}>
+                    <Text style={styles.link}>{e.url}</Text>
+                  </Pressable>
+                ) : e.fileName ? (
+                  <Text style={styles.hint}>첨부 파일: {e.fileName}</Text>
+                ) : null}
                 <View style={styles.trustRow}>
                   <Text style={styles.hint}>
                     신뢰 추천 {e.trust}
@@ -149,7 +187,10 @@ export default function ClaimScreen() {
           <Card>
             <Text style={styles.formTitle}>자료 등록</Text>
             <Field label="제목" value={evTitle} onChangeText={setEvTitle} />
-            <Field label="출처 URL" value={evUrl} onChangeText={setEvUrl} autoCapitalize="none" />
+            <Field label="출처 URL (선택)" value={evUrl} onChangeText={setEvUrl} autoCapitalize="none" />
+            <GhostButton label="이미지/PDF 첨부 (10MB)" onPress={() => void pickEvidenceFile()} />
+            {evFileName ? <Text style={styles.hint}>선택됨: {evFileName}</Text> : null}
+            {evFileError ? <Text style={styles.error}>{evFileError}</Text> : null}
             <Text style={styles.fieldLabel}>지지 방향</Text>
             <View style={styles.chipRow}>
               {(["true", "false", "neutral"] as Stance[]).map((s) => (
@@ -175,7 +216,7 @@ export default function ClaimScreen() {
 
           <Text style={styles.sectionTitle}>토론</Text>
           <Text style={styles.sectionSub}>
-            댓글은 여론에 영향을 주지만, 출처 없이는 팩트 점수에 들어가지 않습니다.
+            댓글은 평문입니다. URL은 자동으로 링크됩니다. 투표 연동 시 기존 표가 바뀝니다.
           </Text>
 
           {comments.map((c) => (
@@ -184,7 +225,7 @@ export default function ClaimScreen() {
                 {c.author} · {c.at}
                 {c.vote ? ` · ${c.vote.toUpperCase()}` : ""}
               </Text>
-              <Text style={styles.body}>{c.body}</Text>
+              <LinkedText style={styles.body}>{c.body}</LinkedText>
             </Card>
           ))}
 
@@ -365,5 +406,6 @@ const styles = StyleSheet.create({
   },
   chipActive: { borderColor: Colors.teal, backgroundColor: "rgba(13,107,99,0.1)" },
   chipText: { fontFamily: Fonts.uiMedium, fontSize: 13, color: Colors.ink },
+  error: { fontFamily: Fonts.ui, fontSize: 12, color: Colors.coral, marginBottom: Spacing.sm },
   author: { fontFamily: Fonts.uiMedium, fontSize: 13, color: Colors.inkSoft, marginBottom: 6 },
 });

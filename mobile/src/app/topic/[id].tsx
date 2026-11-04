@@ -5,8 +5,10 @@ import { Card, Screen } from "@/components/layout";
 import { ScorePair } from "@/components/ScorePair";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Pill, PrimaryButton } from "@/components/ui";
+import { topicDisplayTags, topicUpdatedLabel } from "@/data/topicDisplay";
 import { useFactfulness } from "@/context/FactfulnessContext";
 import { factScore, opinionScore } from "@/scoring";
+import { evidenceInputsFromList } from "@/scoring/evidenceInput";
 import { Colors, Fonts, Spacing } from "@/theme/brand";
 
 export default function TopicScreen() {
@@ -31,10 +33,12 @@ export default function TopicScreen() {
         <Text style={styles.title}>{topic.title}</Text>
         <Text style={styles.lede}>{topic.summary}</Text>
         <View style={styles.metaRow}>
-          {topic.tags.map((tag) => (
+          {topicDisplayTags(topic).map((tag) => (
             <Pill key={tag} label={tag} />
           ))}
-          <Text style={styles.meta}>{topic.participants}명 참여</Text>
+          <Text style={styles.meta}>
+            {topic.participants}명 참여 · 업데이트 {topicUpdatedLabel(topic)}
+          </Text>
         </View>
 
         <View style={styles.sectionHead}>
@@ -52,14 +56,7 @@ export default function TopicScreen() {
         {claims.map((c) => {
           const evidence = repo.getEvidence(c.id);
           const op = opinionScore(c);
-          const fact = factScore(
-            evidence.map((e) => ({
-              id: e.id,
-              url: e.url,
-              stance: e.stance,
-              trust: e.trust,
-            })),
-          );
+          const fact = factScore(evidenceInputsFromList(evidence));
           return (
             <Pressable key={c.id} onPress={() => router.push(`/claim/${c.id}`)}>
               <Card>

@@ -4,7 +4,7 @@
 점수 규칙·**확정된** 제품 결정은 [`HANDOFF.md`](./HANDOFF.md) §3·§6을 따르고, 여기서는 **실제 앱 코드**(`data/types`, `repository/*`, `scoring/*`, 화면 흐름)에 맞춘 **구체적인 구현 체크리스트**를 다룹니다.
 
 - **Repo**: `https://github.com/opixta/factfulness.git`
-- **모바일 SSOT (점수 참조)**: `mobile/src/scoring/` (`RULE_VERSION`: `2026-11-04-decisions`)
+- **모바일 SSOT (점수 참조)**: `mobile/src/scoring/` (`RULE_VERSION`: `2026-11-04-v2`)
 - **시드 데이터**: `mobile/src/data/seed.ts`
 
 ---
@@ -102,9 +102,9 @@ fixtures/
 |-----------------|-----|------|
 | `Topic.id` | `topics.id` UUID | 시드 `t1` 등은 migration seed에서 UUID 고정 또는 slug |
 | `Topic.title`, `summary` | `topics.title`, `topics.summary` | |
-| `Topic.tags[]` | `topics.tags` text[] 또는 `topic_tags` | 로컬 `"신규"` 태그 — 제안 시 기본값 정책 **미결정** |
-| `Topic.participants` | 집계 또는 `topics.participant_count` | 로컬: `proposeClaim` 시 +1 — 서버 규칙 정의 필요 **미결정** |
-| `Topic.updatedAt` | `topics.updated_at` timestamptz | API는 ISO8601, 앱에서 상대 시간 변환 |
+| `Topic.participants` | `topics.participant_count` (cached) | **확정**: unique users with vote/evidence/comment/trust on any claim in topic |
+| `Topic.updatedAt` | `topics.updated_at` | **확정**: bump on **every** such activity including votes |
+| `Topic.tags[]` | `topics.tags` | **「신규」** is derived from `created_at` ≤7d — not stored in tags |
 | `Claim.id` | `claims.id` UUID | |
 | `Claim.text`, `reason?` | `claims.text`, `claims.reason` | |
 | `Claim.votesTrue/False` | `claim_scores` 또는 실시간 COUNT | **캐시 컬럼** 권장 (목록 N+1 방지) |
@@ -121,7 +121,7 @@ fixtures/
 CREATE TABLE users (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   external_id   TEXT NOT NULL UNIQUE,  -- Clerk/Supabase sub
-  display_name  TEXT NOT NULL,
+  display_name  TEXT NOT NULL UNIQUE,  -- nickname: user-chosen, 2–20 chars (app rules)
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -161,8 +161,10 @@ CREATE TABLE evidence (
   claim_id    UUID NOT NULL REFERENCES claims(id) ON DELETE CASCADE,
   user_id     UUID NOT NULL REFERENCES users(id),
   title       TEXT NOT NULL,
-  url         TEXT,              -- C1; file upload 시 file_key + url nullable 정책 미결정
-  file_key    TEXT,              -- 2단계
+  url         TEXT,
+  file_key    TEXT,              -- S3/R2; C1 satisfied if url OR file_key
+  file_mime   TEXT,              -- image/* or application/pdf only
+  file_size   INT,               -- max 10_485_760 bytes
   stance      TEXT NOT NULL CHECK (stance IN ('true','false','neutral')),
   summary     TEXT NOT NULL,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -194,6 +196,26 @@ CREATE TABLE content_reports (
   resolved_at  TIMESTAMPTZ,
   action       TEXT              -- hide|dismiss — MVP: hide hook
 );
+
+CREATE TABLE claim_score_history (
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  claim_id         UUID NOT NULL REFERENCES claims(id) ON DELETE CASCADE,
+  opinion_pct      INT NOT NULL,
+  votes_true       INT NOT NULL,
+  votes_false      INT NOT NULL,
+  fact_status      TEXT NOT NULL,
+  fact_pct         INT,
+  w_true           INT NOT NULL,
+  w_false          INT NOT NULL,
+  eligible_true    INT NOT NULL,
+  eligible_false   INT NOT NULL,
+  gate_passed      BOOLEAN NOT NULL,
+  gate_reasons     JSONB NOT NULL DEFAULT '[]',
+  rule_version     TEXT NOT NULL,
+  computed_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX claim_score_history_claim_id_idx ON claim_score_history (claim_id, computed_at DESC);
 
 CREATE TABLE claim_scores (
   claim_id         UUID PRIMARY KEY REFERENCES claims(id) ON DELETE CASCADE,
@@ -333,7 +355,8 @@ interface CommentDto {
 **작업 항목**
 
 - [ ] 모든 write 후 `claim_scores` 동기 recompute (해당 claim)
-- [ ] topic `updated_at` — evidence/trust/comment/vote 시 갱신 여부 **미결정** (UX: “활동 있음”)
+- [ ] `recompute_claim`: **INSERT** into `claim_score_history` then **UPSERT** `claim_scores` (every recompute)
+- [ ] topic `updated_at` + participant_count refresh on vote/evidence/comment/trust
 
 ### 4.4 점수 규칙 설명 화면
 
@@ -392,7 +415,9 @@ Optional `GET /config/scoring`:
 3. `fact = fact_score(...)` → `claim_scores` upsert with `rule_version=RULE_VERSION`
 4. Return DTO
 
-**확정 후 새 증거/trust**: **항상 재계산** — `fact_status`는 `pending|fact|lie|split`로 **덮어쓰기** (판정 변경 가능). 스냅샷 history 테이블은 **미결정** (HANDOFF §7).
+**확정 후 새 증거/trust**: **항상 재계산** + **append history row** every time.
+
+**C3 file evidence (default — PO may revisit)**: each uploaded file uses source key `file:{evidence_id}` so **two uploads always count as two sources**, even from the same user. Alternative: `file-uploader:{user_id}` — not implemented.
 
 ### 5.3 Golden tests (c1 / c2 / c3)
 
@@ -431,7 +456,8 @@ Optional `GET /config/scoring`:
 - [ ] Env: `SUPABASE_URL`, `SUPABASE_JWT_SECRET` (또는 JWKS: `{SUPABASE_URL}/auth/v1/.well-known/jwks.json`)
 - [ ] `python-jose` / PyJWT로 JWT 검증: `aud`=`authenticated`, `iss`=`{SUPABASE_URL}/auth/v1`, `sub` → `users.external_id`
 - [ ] Dependency `get_current_user`: Bearer 필수 (write); `get_optional_user` (public GET)
-- [ ] 첫 write 시 `users` row upsert (`display_name` from `user_metadata` — **미결정** 필드명)
+- [ ] `POST /auth/profile` or `PATCH /users/me` — set **nickname** after Supabase signup (unique constraint)
+- [ ] Comments: store plain text; render with URL auto-link only (no markdown sanitizer beyond escape+linkify)
 
 ```python
 # 개념 스케치 — HS256 프로젝트 secret 사용 시
@@ -456,25 +482,17 @@ def verify_supabase_token(token: str, secret: str, project_url: str) -> dict:
 
 ## 7. 증거 URL · 파일 업로드
 
-### 7.1 1단계 (현재 앱과 동일)
-
-앱: `addEvidence({ title, url, stance, summary })` — URL 필수 UI.
+앱: URL **또는** 로컬 파일(image/PDF ≤10MB). 서버: presigned upload + `file_key`.
 
 **서버 작업**
 
 - [ ] URL normalize (strip, scheme allowlist)
-- [ ] C1: `url IS NOT NULL AND url != ''`
-- [ ] C1: `url` required (1단계); `neutral` never eligible
-- [ ] `source_domain(url)` — scoring과 동일 로직 Python 포팅
-
-### 7.2 2단계 (파일)
-
-**작업 항목**
-
-- [ ] `POST /claims/{id}/evidence/upload-url` → presigned PUT
-- [ ] evidence row with `file_key` + public CDN URL
-- [ ] C1: `url OR file_key` — **미결정** (mobile `Evidence.url` 단일 필드 → `mediaUrl` 추가 가능)
-- [ ] MIME/size limit, 바이러스 스캔 hook **미결정**
+- [ ] C1: `url` **OR** `file_key`; `neutral` never eligible
+- [ ] `source_domain(url)` + `file:{evidence_id}` — scoring과 동일 Python 포팅
+- [ ] MIME allowlist: `image/jpeg`, `image/png`, `image/webp`, `image/gif`, `application/pdf`
+- [ ] Max size **10MB**
+- [ ] C3 file default: **`file:{evidence_id}`** per upload (§5.2)
+- [ ] Virus scan: **미결정** (hook placeholder)
 
 ---
 
@@ -548,7 +566,12 @@ TRUST_MIN=3
 MIN_ELIGIBLE_SAME_DIR=2
 FACT_THRESHOLD=0.65
 RULE_VERSION=2026-03-24-draft
-RATE_LIMIT_PER_MIN=60
+RATE_LIMIT_VOTE_PER_USER_PER_MIN=30
+RATE_LIMIT_TRUST_PER_USER_PER_MIN=60
+RATE_LIMIT_COMMENT_PER_USER_PER_MIN=20
+RATE_LIMIT_TOPIC_CREATE_PER_USER_PER_HOUR=5
+RATE_LIMIT_CLAIM_CREATE_PER_USER_PER_HOUR=20
+RATE_LIMIT_EVIDENCE_CREATE_PER_USER_PER_HOUR=30
 ```
 
 **작업 항목**
@@ -564,9 +587,9 @@ RATE_LIMIT_PER_MIN=60
 
 | 위험 | 완화 (작업 항목) |
 |------|------------------|
-| trust/vote spam | Rate limit per IP + per user; CAPTCHA **미결정** |
+| trust/vote spam | Tunable rate limits (§10); **no CAPTCHA** v1 |
 | 악성 URL | scheme allowlist; optional domain blocklist |
-| XSS in comments | escape on display; markdown **미결정** |
+| XSS in comments | **Plain text**; escape + URL linkify only |
 | mass topic/claim | throttle `POST /topics`; **신고 → hide** (`content_reports` + `hidden_at`) |
 | score manipulation | 클라이언트 factScore **제거**, server-only |
 | JWT theft | SecureStore, short TTL, refresh rotation |
@@ -602,31 +625,25 @@ RATE_LIMIT_PER_MIN=60
 - [ ] Admin/moderation
 - [ ] Link archive / preview (OpenGraph)
 - [ ] Search, notifications
-- [ ] (선택) score history table, websocket live scores
+- [ ] (선택) websocket live scores
 
 ---
 
-## 13. 확정된 제품 결정 (2026-11-04)
+## 13. 확정된 제품·운영 결정
 
-HANDOFF §6과 동일. 구현 시 이 기본값을 따른다.
+HANDOFF §6과 동일. 추가 (2026-11-04):
 
-- [x] `TRUST_MIN=3`, `MIN_ELIGIBLE_SAME_DIR=2`, `FACT_THRESHOLD=0.65`
-- [x] C3: **distinct URL domain** per direction; weights = **sum trust per domain**, then sum domains
-- [x] `neutral`: not eligible, not in weights
-- [x] After Fact/Lie: **always recompute** on new evidence/trust (verdict may change)
-- [x] Topics/claims **published immediately**; **report → hide** moderation hook
-- [x] **Login required** for vote & trust; **public read** for GET feeds/detail
-- [x] **Supabase Auth** + FastAPI JWT verification
-- [x] Comment `linked_vote` = same single vote per user per claim
+- [x] `participants` / `updated_at` (§3.1)
+- [x] `claim_score_history` every recompute
+- [x] File C1 (url OR file), MIME/size; C3 **`file:{evidence_id}`** default
+- [x] Plain comments + auto-link; no CAPTCHA; rate limit defaults (§10)
+- [x] Nickname onboarding; derived 「신규」 7d tag
 
 ## 14. 아직 열린 결정
 
-- [ ] `participants` 집계 정의
-- [ ] topic `updated_at` 갱신 트리거
-- [ ] `claim_scores` history / audit rows
-- [ ] 파일 업로드 세부 (MIME, size, scan)
-- [ ] 댓글 markdown, CAPTCHA, rate limit 숫자
-- [ ] `users.display_name` Supabase metadata 필드
+- [ ] Virus scan on upload
+- [ ] File C3 grouping by uploader (alternative to per-file default)
+- [ ] Rate limit tuning in production
 
 ---
 

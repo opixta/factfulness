@@ -1,30 +1,45 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-import { cloneSeedData } from "@/data/seed";
+import { cloneSeedData, migrateAppData } from "@/data/seed";
 import type { AppData, Claim, Comment, Evidence, Topic } from "@/data/types";
 import { STORAGE_KEY } from "@/data/types";
 import type { FactfulnessRepository } from "@/repository/types";
 import { uid } from "@/repository/types";
+import {
+  appendClaimScoreHistory,
+  touchTopicActivity,
+} from "@/repository/metrics";
 
 export class LocalFactfulnessRepository implements FactfulnessRepository {
   private data: AppData;
   private listeners = new Set<() => void>();
   private persistTimer: ReturnType<typeof setTimeout> | null = null;
+  private actorUserId: string;
+  private actorNickname: string;
 
   private constructor(data: AppData) {
     this.data = data;
+    this.actorUserId = data.localUserId;
+    this.actorNickname = "you";
   }
 
   static async create(): Promise<LocalFactfulnessRepository> {
     try {
       const raw = await AsyncStorage.getItem(STORAGE_KEY);
       if (raw) {
-        return new LocalFactfulnessRepository(JSON.parse(raw) as AppData);
+        return new LocalFactfulnessRepository(migrateAppData(JSON.parse(raw)));
       }
     } catch {
       // fall through to seed
     }
     return new LocalFactfulnessRepository(cloneSeedData());
+  }
+
+  setLocalUser(userId: string, nickname: string): void {
+    this.actorUserId = userId;
+    this.actorNickname = nickname;
+    this.data.localUserId = userId;
+    this.notify();
   }
 
   subscribe(listener: () => void): () => void {
@@ -38,6 +53,25 @@ export class LocalFactfulnessRepository implements FactfulnessRepository {
     this.persistTimer = setTimeout(() => {
       void AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(this.data));
     }, 300);
+  }
+
+  private snapshotClaim(claimId: string, topicId: string): void {
+    const claim = this.findClaim(claimId)?.claim;
+    if (claim) {
+      appendClaimScoreHistory(
+        this.data,
+        claimId,
+        claim,
+        this.getEvidence(claimId),
+      );
+    }
+  }
+
+  private bumpTopic(claimId: string): string | null {
+    const found = this.findClaim(claimId);
+    if (!found) return null;
+    touchTopicActivity(this.data, found.topicId, this.actorUserId);
+    return found.topicId;
   }
 
   getData(): AppData {
@@ -79,13 +113,15 @@ export class LocalFactfulnessRepository implements FactfulnessRepository {
   }): Topic {
     const tid = uid("t");
     const cid = uid("c");
+    const now = new Date().toISOString();
     const topic: Topic = {
       id: tid,
       title: input.title,
       summary: input.summary,
-      tags: ["신규"],
-      participants: 1,
-      updatedAt: "방금",
+      tags: [],
+      participants: 0,
+      createdAt: now,
+      updatedAt: now,
     };
     this.data.topics.unshift(topic);
     this.data.claims[tid] = [
@@ -98,6 +134,14 @@ export class LocalFactfulnessRepository implements FactfulnessRepository {
     ];
     this.data.evidence[cid] = [];
     this.data.comments[cid] = [];
+    this.data.topicParticipantUserIds[tid] = [];
+    touchTopicActivity(this.data, tid, this.actorUserId);
+    appendClaimScoreHistory(
+      this.data,
+      cid,
+      this.data.claims[tid][0],
+      [],
+    );
     this.notify();
     return topic;
   }
@@ -120,11 +164,8 @@ export class LocalFactfulnessRepository implements FactfulnessRepository {
     this.data.claims[topicId].push(claim);
     this.data.evidence[cid] = [];
     this.data.comments[cid] = [];
-    const topic = this.getTopic(topicId);
-    if (topic) {
-      topic.updatedAt = "방금";
-      topic.participants += 1;
-    }
+    touchTopicActivity(this.data, topicId, this.actorUserId);
+    appendClaimScoreHistory(this.data, cid, claim, []);
     this.notify();
     return claim;
   }
@@ -132,21 +173,27 @@ export class LocalFactfulnessRepository implements FactfulnessRepository {
   castVote(claimId: string, value: "true" | "false"): void {
     const found = this.findClaim(claimId);
     if (!found) return;
-    const { claim } = found;
+    const { claim, topicId } = found;
     if (claim.userVote === value) return;
     if (claim.userVote === "true") claim.votesTrue = Math.max(0, claim.votesTrue - 1);
     if (claim.userVote === "false") claim.votesFalse = Math.max(0, claim.votesFalse - 1);
     if (value === "true") claim.votesTrue += 1;
     if (value === "false") claim.votesFalse += 1;
     claim.userVote = value;
+    this.bumpTopic(claimId);
+    this.snapshotClaim(claimId, found.topicId);
     this.notify();
   }
 
   addTrust(claimId: string, evidenceId: string): void {
+    const found = this.findClaim(claimId);
+    if (!found) return;
     const list = this.data.evidence[claimId] ?? [];
     const item = list.find((x) => x.id === evidenceId);
     if (item) {
       item.trust += 1;
+      this.bumpTopic(claimId);
+      this.snapshotClaim(claimId, found.topicId);
       this.notify();
     }
   }
@@ -155,9 +202,14 @@ export class LocalFactfulnessRepository implements FactfulnessRepository {
     claimId: string,
     input: Omit<Evidence, "id" | "trust">,
   ): Evidence {
+    const found = this.findClaim(claimId);
     const item: Evidence = { ...input, id: uid("e"), trust: 0 };
     if (!this.data.evidence[claimId]) this.data.evidence[claimId] = [];
     this.data.evidence[claimId].unshift(item);
+    if (found) {
+      this.bumpTopic(claimId);
+      this.snapshotClaim(claimId, found.topicId);
+    }
     this.notify();
     return item;
   }
@@ -169,7 +221,7 @@ export class LocalFactfulnessRepository implements FactfulnessRepository {
     const vote = input.vote ?? "";
     const item: Comment = {
       id: uid("cm"),
-      author: "you",
+      author: this.actorNickname,
       body: input.body,
       vote,
       at: "방금",
@@ -177,8 +229,14 @@ export class LocalFactfulnessRepository implements FactfulnessRepository {
     if (!this.data.comments[claimId]) this.data.comments[claimId] = [];
     this.data.comments[claimId].unshift(item);
 
-    if (vote === "true" || vote === "false") {
-      this.castVote(claimId, vote);
+    const found = this.findClaim(claimId);
+    if (found) {
+      if (vote === "true" || vote === "false") {
+        this.castVote(claimId, vote);
+      } else {
+        this.bumpTopic(claimId);
+        this.snapshotClaim(claimId, found.topicId);
+      }
     }
     this.notify();
     return item;

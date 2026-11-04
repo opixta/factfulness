@@ -61,7 +61,7 @@
 | `TRUST_MIN` | `3` | 증거가 “적격”이 되려면 신뢰 추천 ≥ 3 (C2) |
 | `MIN_ELIGIBLE_SAME_DIR` | `2` | 확정 방향마다 **서로 다른 출처 도메인** ≥ 2 (C3) |
 | `FACT_THRESHOLD` | `0.65` | Fact/Lie 확정에 필요한 적격 가중치 비중 ≥ 65% |
-| `RULE_VERSION` | `2026-11-04-decisions` | 도메인 C3·중립 제외·제품 결정 반영 |
+| `RULE_VERSION` | `2026-11-04-v2` | 파일 C1 + `file:{id}` C3 + 운영 결정 반영 |
 
 ### 여론 점수 (Opinion)
 
@@ -230,24 +230,35 @@ scoring/
 
 ---
 
-## 6. 확정된 제품·규칙 결정 (2026-11-04)
+## 6. 확정된 제품·규칙 결정
+
+### 2026-11-04 (점수·인증·공개)
 
 - **임계값**: `TRUST_MIN=3`, `MIN_ELIGIBLE_SAME_DIR=2`, `FACT_THRESHOLD=0.65` 유지
-- **C3 출처**: 동일 방향 적격 증거는 **서로 다른 URL 도메인** 기준 2개 이상; 가중치는 **도메인별 trust 합** 후 방향 합산
+- **C3 출처**: 동일 방향 **서로 다른 URL 도메인** ≥ 2; 가중치 = **도메인별 trust 합** 후 방향 합산
 - **중립 증거**: 팩트 점수 **적격·가중치 모두 제외**
-- **재오픈**: Fact/Lie 확정 후에도 증거/trust 변경 시 **자동 재계산** (판정 변경 가능)
-- **공개**: 토픽·claim 제안 **즉시 published**; 신고 → 숨김(report→hide) 모더레이션 훅
-- **인증**: **투표·trust는 로그인 필수**; **읽기는 비로그인 허용** (목록/상세 GET public)
+- **재오픈**: Fact/Lie 확정 후에도 증거/trust 변경 시 **자동 재계산**
+- **공개**: 토픽·claim **즉시 published**; 신고 → 숨김
+- **인증**: 투표·trust **로그인 필수**; **읽기 public**
 - **Auth**: **Supabase Auth**
-- **댓글 투표**: claim당 유저 **1표** — 댓글 `linked_vote`는 `votes` UPSERT와 동일
+- **댓글 투표**: claim당 유저 **1표** (댓글 linked_vote = `votes` UPSERT)
+
+### 2026-11-04 (운영·UX·백엔드)
+
+- **`participants`**: 토픽 내 **임의 claim**에서 vote / evidence / comment / trust 한 번이라도 한 **고유 유저 수**
+- **`updated_at`**: 위 활동 **전부**(투표 포함)마다 토픽 갱신
+- **`claim_score_history`**: recompute마다 **이력 row** (`rule_version`, status, pct, weights, gate_reasons, `computed_at`)
+- **파일 증거 C1**: **url OR file**; **이미지+PDF만**, **max 10MB**; C3 파일 출처 기본값 = **`file:{evidence_id}` 건별 distinct** (업로더별 묶음 아님 — 변경 가능)
+- **댓글**: **평문만**; 표시 시 URL **auto-link** (markdown 없음)
+- **CAPTCHA**: 초기 **없음**; **rate limit**만 (기본값은 `mobile/src/config/rateLimits.ts`, `BACKEND.md` §10)
+- **닉네임**: Supabase 로그인 **후 온보딩**에서 **자가 설정** (로컬: 2–20자, 한글/영문/숫자/`_`; 서버: **전역 unique** 예정)
+- **「신규」 태그**: 생성 후 **7일** — `createdAt` 기준 **파생** (tags 배열에 수동 저장하지 않음)
 
 ## 7. 아직 열린 결정
 
-- `participants` 집계 정의 (로컬: `proposeClaim` 시 +1)
-- 토픽 `updated_at` 갱신 트리거 (어떤 write에 반영할지)
-- 확정 이력: `claim_scores` 스냅샷/history 테이블 보존 여부
-- 파일 업로드 MIME·용량·바이러스 스캔
-- 댓글 markdown, CAPTCHA, rate limit 수치
+- 바이러스 스캔 / 파일 저장 CDN 세부
+- rate limit **숫자** 트래픽 보며 튜닝 (초기값은 문서화됨)
+- 파일 C3를 **업로더 단위**로 묶을지 (현재 기본: **파일마다 distinct**)
 
 ---
 

@@ -31,6 +31,9 @@ export interface FactfulnessRepository {
     input: { body: string; vote?: "" | "true" | "false" },
   ): Comment;
 
+  /** Local / dev: bind actor for participants + comment author */
+  setLocalUser(userId: string, nickname: string): void;
+
   subscribe(listener: () => void): () => void;
 }
 

@@ -3,4 +3,5 @@ export * from "./types";
 export * from "./eligibility";
 export * from "./opinion";
 export * from "./factScore";
-export * from "./domain";
+export * from "./evidenceInput";
+export * from "./sourceKey";

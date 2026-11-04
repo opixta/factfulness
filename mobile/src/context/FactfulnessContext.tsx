@@ -10,6 +10,7 @@ import React, {
 import type { AppData } from "@/data/types";
 import { isApiMode } from "@/api/config";
 import { ConnectionErrorBanner } from "@/components/ConnectionErrorBanner";
+import { useAuth } from "@/context/AuthContext";
 import {
   isApiRepository,
   type ApiRepositoryError,
@@ -31,6 +32,7 @@ interface FactfulnessContextValue {
 const FactfulnessContext = createContext<FactfulnessContextValue | null>(null);
 
 export function FactfulnessProvider({ children }: { children: React.ReactNode }) {
+  const { accessToken, ready: authReady } = useAuth();
   const [repo, setRepo] = useState<FactfulnessRepository | null>(null);
   const [tick, setTick] = useState(0);
   const [loadError, setLoadError] = useState<ApiRepositoryError | null>(null);
@@ -50,9 +52,11 @@ export function FactfulnessProvider({ children }: { children: React.ReactNode })
   }, [repo]);
 
   useEffect(() => {
+    if (!authReady) return;
     let unsub: (() => void) | undefined;
     setInitializing(true);
-    void createFactfulnessRepository()
+    const tokenSnapshot = () => accessToken;
+    void createFactfulnessRepository(tokenSnapshot)
       .then((instance) => {
         setRepo(instance);
         if (isApiRepository(instance)) {
@@ -71,7 +75,7 @@ export function FactfulnessProvider({ children }: { children: React.ReactNode })
       })
       .finally(() => setInitializing(false));
     return () => unsub?.();
-  }, [refresh]);
+  }, [accessToken, authReady, refresh]);
 
   const value = useMemo((): FactfulnessContextValue | null => {
     if (!repo) return null;
@@ -85,14 +89,14 @@ export function FactfulnessProvider({ children }: { children: React.ReactNode })
     };
   }, [repo, tick, refresh]);
 
-  if (initializing && !value) return null;
+  if ((!authReady || initializing) && !value) return null;
   if (!value && loadError) {
     return (
       <ConnectionErrorBanner
         message={loadError.message}
         onRetry={() => {
           setInitializing(true);
-          void createFactfulnessRepository()
+          void createFactfulnessRepository(() => accessToken)
             .then((instance) => {
               setRepo(instance);
               setLoadError(null);

@@ -16,6 +16,7 @@ import { useEffect } from "react";
 import { StatusBar } from "expo-status-bar";
 
 import { FactfulnessProvider } from "@/context/FactfulnessContext";
+import { AuthProvider } from "@/context/AuthContext";
 import { UserProfileProvider } from "@/context/UserProfileContext";
 import { Colors } from "@/theme/brand";
 
@@ -44,6 +45,7 @@ export default function RootLayout() {
   }
 
   return (
+    <AuthProvider>
     <FactfulnessProvider>
       <UserProfileProvider>
         <StatusBar style="dark" />
@@ -73,6 +75,10 @@ export default function RootLayout() {
           options={{ title: "세부 명제 제안", presentation: "modal" }}
         />
         <Stack.Screen
+          name="login"
+          options={{ title: "로그인", presentation: "modal" }}
+        />
+        <Stack.Screen
           name="onboarding-nickname"
           options={{ title: "닉네임", presentation: "modal" }}
         />
@@ -83,5 +89,6 @@ export default function RootLayout() {
       </Stack>
       </UserProfileProvider>
     </FactfulnessProvider>
+    </AuthProvider>
   );
 }

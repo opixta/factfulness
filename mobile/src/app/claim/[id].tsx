@@ -21,6 +21,7 @@ import { EligibleBadge, StanceBadge } from "@/components/StanceBadge";
 import { StatusBadge } from "@/components/StatusBadge";
 import { GhostButton, PrimaryButton } from "@/components/ui";
 import { ALLOWED_EVIDENCE_MIMES, MAX_EVIDENCE_FILE_BYTES } from "@/data/types";
+import { useRequireAuthForWrite } from "@/auth/useRequireAuthForWrite";
 import { useClaimScores, useFactfulness } from "@/context/FactfulnessContext";
 import {
   findBannedWord,
@@ -38,6 +39,7 @@ import { Colors, Fonts, Radius, Spacing } from "@/theme/brand";
 export default function ClaimScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { repo, refresh, apiMode } = useFactfulness();
+  const requireAuth = useRequireAuthForWrite();
   const scores = useClaimScores(id);
   const found = repo.findClaim(id);
 
@@ -176,13 +178,13 @@ export default function ClaimScreen() {
                 label="True 투표"
                 selected={claim.userVote === "true"}
                 tone="true"
-                onPress={() => repo.castVote(id, "true")}
+                onPress={() => requireAuth(() => repo.castVote(id, "true"))}
               />
               <VoteButton
                 label="False 투표"
                 selected={claim.userVote === "false"}
                 tone="false"
-                onPress={() => repo.castVote(id, "false")}
+                onPress={() => requireAuth(() => repo.castVote(id, "false"))}
               />
             </View>
 
@@ -254,7 +256,7 @@ export default function ClaimScreen() {
                   <GhostButton
                     label="추천 +1"
                     disabled={!canEndorseTrustEvidence(e)}
-                    onPress={() => repo.addTrust(id, e.id)}
+                    onPress={() => requireAuth(() => repo.addTrust(id, e.id))}
                   />
                 </View>
               </Card>
@@ -288,7 +290,7 @@ export default function ClaimScreen() {
               onChangeText={setEvSummary}
               multiline
             />
-            <PrimaryButton label="자료 등록" onPress={submitEvidence} />
+            <PrimaryButton label="자료 등록" onPress={() => requireAuth(submitEvidence)} />
           </Card>
 
           <Text style={styles.sectionTitle}>토론</Text>
@@ -332,7 +334,7 @@ export default function ClaimScreen() {
             <PrimaryButton
               label="댓글 남기기"
               disabled={!commentBody.trim() || Boolean(commentBanned)}
-              onPress={submitComment}
+              onPress={() => requireAuth(submitComment)}
             />
           </Card>
         </ScrollView>

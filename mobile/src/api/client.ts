@@ -1,4 +1,5 @@
 import { ApiRequestError } from "@/api/errors";
+import { resolveApiAuth, type ApiAuthContext } from "@/auth/apiAuth";
 
 export type DevAuthHeaders = {
   externalId: string;
@@ -8,7 +9,7 @@ export type DevAuthHeaders = {
 export class FactfulnessApiClient {
   constructor(
     private readonly baseUrl: string,
-    private getDevAuth: () => DevAuthHeaders | null,
+    private getAuth: () => ApiAuthContext,
   ) {}
 
   async request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -17,10 +18,12 @@ export class FactfulnessApiClient {
       ...(init.body ? { "Content-Type": "application/json" } : {}),
       ...(init.headers as Record<string, string> | undefined),
     };
-    const dev = this.getDevAuth();
-    if (dev) {
-      headers["X-Dev-User-External-Id"] = dev.externalId;
-      headers["X-Dev-Display-Name"] = dev.displayName;
+    const auth = this.getAuth();
+    if (auth.bearerToken) {
+      headers.Authorization = `Bearer ${auth.bearerToken}`;
+    } else if (auth.dev) {
+      headers["X-Dev-User-External-Id"] = auth.dev.externalId;
+      headers["X-Dev-Display-Name"] = auth.dev.displayName;
     }
 
     let res: Response;
@@ -54,4 +57,11 @@ export class FactfulnessApiClient {
     }
     return (await res.json()) as T;
   }
+}
+
+export function buildAuthFromGetter(
+  getBearer: () => string | null,
+  getDev: () => DevAuthHeaders | null,
+): () => ApiAuthContext {
+  return () => resolveApiAuth(getBearer, getDev);
 }

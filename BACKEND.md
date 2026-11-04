@@ -1023,6 +1023,7 @@ HANDOFF §6과 동일. Highlights:
 | `mobile/src/moderation/bannedWords.generated.ts` | Generated word list (run build script) |
 | `mobile/src/search/titleSearch.ts` | MVP title search (local + server spec) |
 | `mobile/src/config/moderation.ts` | Report auto-hide threshold |
+| `mobile/src/notifications/registerPush.ts` | Expo push permission/token stub |
 | `mobile/src/notifications/verdictPush.ts` | Verdict push opt-in logic |
 | `mobile/src/linkPreview/simulatePreview.ts` | Local OG preview simulation |
 | `mobile/src/components/EvidenceLinkPreview.tsx` | URL evidence preview card |

@@ -7,6 +7,7 @@
 - **상태**: **React Native (Expo) 모바일 앱** 1차 구현 + 정적 웹 프로토타입(참조용)
 - **모바일 실행**: `cd mobile && npx expo start` (iOS/Android/웹)
 - **웹 프로토타입 미리보기**: `cd web-prototype && python3 -m http.server 8765` → `http://localhost:8765`
+- **백엔드 구현 가이드**: [`BACKEND.md`](./BACKEND.md) — Expo 앱(`mobile/`) 연동용 API·DB·점수·로드맵 체크리스트
 
 ---
 
@@ -159,6 +160,8 @@ npx expo start          # QR / 시뮬레이터 / w 키로 웹
 
 ## 5. 백엔드 권장 (요건 검증 MVP)
 
+> **상세 작업 목록**: 모바일 Repository·화면·점수 모듈에 맞춘 엔드포인트/스키마/단계별 로드맵은 [`BACKEND.md`](./BACKEND.md)를 참고한다.
+
 목표: “서버 점수가 여론과 분리되어 올바르게 바뀌는가”를 확인.
 
 ### 스택 추천
@@ -261,7 +264,8 @@ scoring/
 ```
 mobile/                 # Expo app (primary product)
 web-prototype/          # static reference (index.html, styles.css, app.js)
-HANDOFF.md              # this document
+HANDOFF.md              # product + scoring + handoff
+BACKEND.md              # backend implementation guide for mobile/
 ```
 
 백엔드 착수 시 `backend/` 추가. 점수 SSOT는 서버로 옮긴 뒤 모바일 `scoring/`은 테스트·오프라인 미리보기용으로 유지하거나 공유 패키지로 승격.

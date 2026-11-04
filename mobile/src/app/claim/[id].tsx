@@ -1,7 +1,7 @@
 import * as DocumentPicker from "expo-document-picker";
 import * as WebBrowser from "expo-web-browser";
-import { router, useLocalSearchParams } from "expo-router";
-import { useState } from "react";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
+import { useCallback, useEffect, useState } from "react";
 import {
   KeyboardAvoidingView,
   Platform,
@@ -37,7 +37,7 @@ import { Colors, Fonts, Radius, Spacing } from "@/theme/brand";
 
 export default function ClaimScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { repo } = useFactfulness();
+  const { repo, refresh, apiMode } = useFactfulness();
   const scores = useClaimScores(id);
   const found = repo.findClaim(id);
 
@@ -63,6 +63,20 @@ export default function ClaimScreen() {
   const { claim, op, fact } = scores;
   const evidence = repo.getEvidence(id);
   const comments = repo.getComments(id);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (apiMode) refresh();
+    }, [apiMode, refresh]),
+  );
+
+  useEffect(() => {
+    if (!apiMode) return;
+    const pending = evidence.some((e) => e.fileScanStatus === "pending");
+    if (!pending) return;
+    const timer = setInterval(() => refresh(), 2500);
+    return () => clearInterval(timer);
+  }, [apiMode, evidence, refresh]);
 
   const gateText = fact.gatePassed
     ? "조건 C1–C4를 충족해 Fact/Lie 점수에 반영되고 있습니다."
@@ -96,6 +110,9 @@ export default function ClaimScreen() {
       .catch((err: unknown) => {
         if (err instanceof Error && err.message === "FILE_EVIDENCE_REQUIRES_R2") {
           setEvFileError("파일 증거는 API 모드에서 아직 지원되지 않습니다 (Phase 1 R2).");
+        }
+        if (err instanceof Error && (err.message === "FILE_TOO_LARGE" || err.message === "INVALID_FILE_TYPE")) {
+          setEvFileError("파일 형식 또는 크기가 허용되지 않습니다.");
         }
       });
   };
@@ -211,8 +228,16 @@ export default function ClaimScreen() {
                       <Text style={styles.hint}>아카이브 저장 중…</Text>
                     ) : null}
                   </>
-                ) : e.fileName ? (
-                  <Text style={styles.hint}>첨부 파일: {e.fileName}</Text>
+                ) : e.fileName || e.fileMime ? (
+                  <>
+                    <Text style={styles.hint}>첨부 파일: {e.fileName ?? e.title}</Text>
+                    {e.fileScanStatus === "pending" ? (
+                      <Text style={styles.hint}>바이러스 검사 중…</Text>
+                    ) : null}
+                    {e.fileScanStatus === "infected" ? (
+                      <Text style={styles.trustBlockNote}>감염으로 거부된 파일입니다.</Text>
+                    ) : null}
+                  </>
                 ) : null}
                 <View style={styles.trustRow}>
                   <View style={styles.trustMeta}>

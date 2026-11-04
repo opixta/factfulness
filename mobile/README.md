@@ -43,10 +43,12 @@ By default the app uses **offline local storage** with seed data (`LocalFactfuln
 
 **Still local-only when `EXPO_PUBLIC_API_URL` is set:**
 
-- File/image/PDF evidence uploads (needs Phase 1 R2 + scan pipeline)
 - Persisting the full app blob to AsyncStorage (API reloads from `/v1/bootstrap`)
 - `claimScoreHistory` / local report ledger mirrors
 - Actual push delivery (token is stored via API stub only)
+- Public CDN file URLs (presigned download only in API mode)
+
+**File evidence in API mode:** pick image/PDF → presigned upload → poll scan status on claim screen. Requires backend MinIO/R2 + ClamAV (see `backend/README.md`).
 
 Failed network/API calls show a **retry** banner; there is no offline mutation queue.
 

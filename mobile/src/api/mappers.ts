@@ -47,6 +47,11 @@ export type ApiEvidenceDto = {
   stance: string;
   summary: string;
   trust: number;
+  fileMime?: string | null;
+  fileSize?: number | null;
+  fileName?: string | null;
+  scanStatus?: string | null;
+  status?: string;
   ogTitle?: string | null;
   ogSiteName?: string | null;
   ogImageUrl?: string | null;
@@ -103,6 +108,9 @@ export function mapEvidence(row: ApiEvidenceDto): Evidence {
     stance: row.stance as Evidence["stance"],
     summary: row.summary,
     trust: row.trust,
+    fileName: row.fileName ?? undefined,
+    fileMime: row.fileMime ?? undefined,
+    fileScanStatus: row.scanStatus as Evidence["fileScanStatus"],
     ogTitle: row.ogTitle ?? undefined,
     ogSiteName: row.ogSiteName ?? undefined,
     ogImageUrl: row.ogImageUrl ?? undefined,

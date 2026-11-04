@@ -101,4 +101,85 @@ describe("ApiFactfulnessRepository", () => {
       expect(headers["X-Dev-Display-Name"]).toBe("Tester");
     });
   });
+
+  it("uploads file evidence via presigned flow", async () => {
+    let scanPending = true;
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/v1/bootstrap")) {
+        return new Response(JSON.stringify(bootstrapPayload), { status: 200 });
+      }
+      if (String(url).includes("/file/upload-url") && init?.method === "POST") {
+        return new Response(
+          JSON.stringify({
+            evidenceId: "ev-file-1",
+            uploadUrl: "https://minio/upload",
+            uploadHeaders: { "Content-Type": "application/pdf" },
+          }),
+          { status: 201 },
+        );
+      }
+      if (url === "https://minio/upload" && init?.method === "PUT") {
+        return new Response("", { status: 200 });
+      }
+      if (String(url).includes("/file/complete")) {
+        return new Response(JSON.stringify({ scanStatus: "pending" }), { status: 200 });
+      }
+      if (String(url).endsWith("/v1/evidence/ev-file-1/file/scan-status")) {
+        if (scanPending) {
+          scanPending = false;
+          return new Response(
+            JSON.stringify({
+              scanStatus: "pending",
+              evidence: {
+                id: "ev-file-1",
+                title: "f",
+                url: "",
+                stance: "true",
+                summary: "s",
+                trust: 0,
+                fileMime: "application/pdf",
+                scanStatus: "pending",
+              },
+            }),
+            { status: 200 },
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            scanStatus: "clean",
+            evidence: {
+              id: "ev-file-1",
+              title: "f",
+              url: "",
+              stance: "true",
+              summary: "s",
+              trust: 0,
+              fileMime: "application/pdf",
+              scanStatus: "clean",
+            },
+          }),
+          { status: 200 },
+        );
+      }
+      if (String(url).startsWith("file://local")) {
+        return new Response(new Blob(["pdf-bytes"], { type: "application/pdf" }), {
+          status: 200,
+        });
+      }
+      return new Response("{}", { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const repo = await ApiFactfulnessRepository.create("http://127.0.0.1:8000");
+    const item = await repo.addEvidence("c-1", {
+      title: "f",
+      url: "",
+      stance: "true",
+      summary: "s",
+      fileName: "doc.pdf",
+      fileMime: "application/pdf",
+      localFileUri: "file://local/doc.pdf",
+    });
+    expect(item.fileScanStatus).toBe("clean");
+  });
 });

@@ -15,6 +15,14 @@ import {
   type ApiClaimSummary,
 } from "@/api/mappers";
 import { ApiRequestError, isNetworkError } from "@/api/errors";
+import {
+  assertAllowedMime,
+  completeFileUpload,
+  pollScanStatus,
+  putFileToPresignedUrl,
+  requestFileUploadSlot,
+} from "@/api/fileEvidence";
+import { MAX_EVIDENCE_FILE_BYTES } from "@/data/types";
 import type { FactfulnessRepository } from "@/repository/types";
 import type { ReportTargetType } from "@/moderation/reportKeys";
 
@@ -211,10 +219,18 @@ export class ApiFactfulnessRepository implements FactfulnessRepository {
     claimId: string,
     input: Omit<Evidence, "id" | "trust">,
   ): Promise<Evidence> {
-    if (input.fileName || input.localFileUri || input.fileMime) {
-      return Promise.reject(
-        new Error("FILE_EVIDENCE_REQUIRES_R2"),
-      );
+    const hasFile = Boolean(input.localFileUri && input.fileName);
+    if (hasFile) {
+      const mime = input.fileMime ?? "application/octet-stream";
+      assertAllowedMime(mime);
+      return this.uploadFileEvidence(claimId, {
+        title: input.title,
+        summary: input.summary,
+        stance: input.stance,
+        fileName: input.fileName!,
+        fileMime: mime,
+        localFileUri: input.localFileUri!,
+      });
     }
     return this.client
       .request<{ evidence: Parameters<typeof mapEvidence>[0]; scores: ApiClaimScores }>(
@@ -335,6 +351,61 @@ export class ApiFactfulnessRepository implements FactfulnessRepository {
       applyScoresToClaim(found.claim, scores);
     }
     this.notify();
+  }
+
+  private async uploadFileEvidence(
+    claimId: string,
+    input: {
+      title: string;
+      summary: string;
+      stance: string;
+      fileName: string;
+      fileMime: string;
+      localFileUri: string;
+    },
+  ): Promise<Evidence> {
+    try {
+      const blobResp = await fetch(input.localFileUri);
+      const blob = await blobResp.blob();
+      if (blob.size > MAX_EVIDENCE_FILE_BYTES) {
+        throw new Error("FILE_TOO_LARGE");
+      }
+      const slot = await requestFileUploadSlot(
+        (path, init) => this.client.request(path, init),
+        claimId,
+        {
+          title: input.title,
+          summary: input.summary,
+          stance: input.stance,
+          fileName: input.fileName,
+          fileMime: input.fileMime,
+          fileSize: blob.size,
+        },
+      );
+      await putFileToPresignedUrl(input.localFileUri, slot.uploadUrl, slot.uploadHeaders);
+      await completeFileUpload(
+        (path, init) => this.client.request(path, init),
+        claimId,
+        slot.evidenceId,
+      );
+      const polled = await pollScanStatus(
+        (path, init) => this.client.request(path, init),
+        slot.evidenceId,
+        30,
+        300,
+      );
+      const item = mapEvidence(polled.evidence as Parameters<typeof mapEvidence>[0]);
+      if (!this.data.evidence[claimId]) this.data.evidence[claimId] = [];
+      this.data.evidence[claimId] = [
+        item,
+        ...this.data.evidence[claimId].filter((e) => e.id !== item.id),
+      ];
+      await this.reload();
+      return item;
+    } catch (err) {
+      this.emitError(err);
+      throw err;
+    }
   }
 }
 

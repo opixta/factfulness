@@ -263,16 +263,22 @@ scoring/
 
 ### 2026-11-04 (라운드 4 — 저장·모더레이션·오프라인·trust)
 
-- **객체 저장**: **Cloudflare R2** (S3-compatible). Quarantine + clean evidence **버킷**; presigned upload/download. Clean 파일 MVP는 **presigned URL** (공개 CDN/custom domain은 후보).
-- **댓글 모더레이션**: **금지어 목록** 자동 차단 (KO+EN, normalize 후 substring). 서버 SSOT `backend/config/banned_words.txt`; API `422 COMMENT_BANNED`. 모바일 `mobile/src/moderation/bannedWords.ts`는 placeholder + 즉시 UX. **신고/`hidden_at`**은 2차.
-- **오프라인 mutation queue**: **MVP 제외** — 오프라인 시 쓰기 실패, **에러/재시도** (queue 없음).
-- **Trust on pending/infected file evidence**: **금지** — `canEndorseTrustEvidence`; UI 비활성 + 안내.
+- **객체 저장**: **Cloudflare R2** (S3-compatible). Quarantine + clean evidence **버킷**; presigned upload/download.
+- **댓글 모더레이션**: 금지어 자동 차단 + 신고/`hidden_at` 2차; 오프라인 queue MVP 제외; pending/infected 파일 trust 금지.
+
+### 2026-11-04 (라운드 5 — 전달·버킷·금지어·관리자)
+
+- **파일 전달**: MVP **presigned download만**; Phase 2에서 clean 파일 **R2 custom domain 공개 CDN** (확정).
+- **R2 버킷**: **quarantine + clean 두 버킷** (단일 버킷 대안 제거).
+- **금지어**: 오픈소스 **[LDNOOBW](https://github.com/LDNOOBW/List-of-Dirty-Naughty-Obscene-and-Otherwise-Bad-Words)** `en`+`ko` (**CC BY 4.0**), `scripts/build-banned-words.mjs`로 `backend/config/banned_words.txt` + 모바일 generated list 동기화. 영어는 **word boundary**, 한국어는 **substring** (오탐은 exclusions + 신고 2차).
+- **Admin**: MVP는 **신고 + `hidden_at`만** — **관리자 화면 없음**; Phase 2에 admin tooling.
 
 ## 7. 아직 열린 결정
 
-- R2 clean 파일 **공개 CDN** vs presigned-only (MVP: presigned)
-- 금지어 목록 **운영·확장** (누가/어떻게 갱신)
-- (기타) Admin 모더레이션 UI, 링크 아카이브 등 — [`BACKEND.md`](./BACKEND.md) §14
+- R2 custom domain / CDN 세부 (Phase 2)
+- LDNOOBW 외 추가 locale·혐오 표현 소스 여부
+- `hidden_at` 운영 runbook (admin UI 전)
+- (기타) 링크 아카이브, 검색 등 — [`BACKEND.md`](./BACKEND.md) §14
 
 ---
 

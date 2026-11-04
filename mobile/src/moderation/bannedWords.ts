@@ -1,13 +1,10 @@
 /**
- * PLACEHOLDER — not production moderation.
- * Server loads the real list from repo config (see BACKEND.md §11).
- * Keep roughly in sync for client-side UX hints only; server always re-checks.
+ * Client-side comment moderation (UX). Server reloads backend/config/banned_words.txt.
+ * Word list: LDNOOBW en+ko (CC BY 4.0) — see third_party/ldnoobw/ATTRIBUTION.md
  */
-export const PLACEHOLDER_BANNED_WORDS: readonly string[] = [
-  "spamword",
-  "욕설예시",
-  "hateword",
-];
+import { BANNED_WORDS } from "@/moderation/bannedWords.generated";
+
+export { BANNED_WORDS };
 
 export function normalizeModerationText(text: string): string {
   return text
@@ -18,20 +15,39 @@ export function normalizeModerationText(text: string): string {
     .trim();
 }
 
+/** Latin-script terms use word boundaries; Hangul/mixed terms use substring (see BACKEND §11.1). */
+export function termUsesWordBoundary(term: string): boolean {
+  const w = normalizeModerationText(term);
+  return /^[\x00-\x7F]+$/.test(w);
+}
+
+export function normalizedTextMatchesTerm(
+  normalizedText: string,
+  term: string,
+): boolean {
+  const w = normalizeModerationText(term);
+  if (!w) return false;
+  if (termUsesWordBoundary(w)) {
+    const escaped = w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`).test(normalizedText);
+  }
+  if (w.length < 2) return false;
+  return normalizedText.includes(w);
+}
+
 export interface BannedWordMatch {
   matched: string;
 }
 
-/** Returns first banned substring hit, or null if clean. */
+/** Returns first banned hit, or null if clean. */
 export function findBannedWord(
   text: string,
-  wordList: readonly string[] = PLACEHOLDER_BANNED_WORDS,
+  wordList: readonly string[] = BANNED_WORDS,
 ): BannedWordMatch | null {
   const normalized = normalizeModerationText(text);
   if (!normalized) return null;
   for (const word of wordList) {
-    const w = normalizeModerationText(word);
-    if (w && normalized.includes(w)) {
+    if (normalizedTextMatchesTerm(normalized, word)) {
       return { matched: word };
     }
   }

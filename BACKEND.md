@@ -511,7 +511,7 @@ def verify_supabase_token(token: str, secret: str, project_url: str) -> dict:
 3. Enqueue scan job (동기 MVP 가능, 비동기 권장)
 4. Worker streams object bytes → clamd
    ├─ CLEAN  → scan_status='clean', scanned_at=now(),
-   │           copy quarantine → file_key (public/CDN), delete quarantine,
+   │           copy quarantine → file_key (clean bucket), delete quarantine,
    │           recompute claim_scores + history
    └─ INFECTED → scan_status='infected', status='rejected', scanned_at=now(),
                  delete quarantine object, gate trust/evidence UI,
@@ -553,14 +553,12 @@ R2_EVIDENCE_BUCKET=factfulness-evidence
 
 **벤더**: **Cloudflare R2** only (S3-compatible API via `boto3` / AWS SDK). Generic S3 is out of scope for MVP docs.
 
-**버킷 레이아웃 (MVP 기본 — 두 버킷)**
+**버킷 레이아웃 (확정 — 두 버킷)**
 
 | 버킷 | 용도 | 공개 접근 |
 |------|------|-----------|
 | `R2_QUARANTINE_BUCKET` | presigned **upload** landing; ClamAV 입력 | **비공개** — presigned GET만 (worker) |
-| `R2_EVIDENCE_BUCKET` | `scan_status=clean` promote 대상 | MVP: **presigned GET** (짧은 TTL)로 앱/웹 다운로드 |
-
-**대안 (미구현, 문서만)**: 단일 버킷 + prefix `quarantine/` vs `clean/` — 운영 단순화 시 전환 가능; env는 `R2_BUCKET` + prefix vars로 치환.
+| `R2_EVIDENCE_BUCKET` | `scan_status=clean` promote 대상 | MVP: **presigned GET only** (§7.4) |
 
 **Object key (제안)**
 
@@ -572,12 +570,16 @@ evidence/{claim_id}/{evidence_id}/{uuid}.{ext}     # clean promote 후 DB file_k
 **Presigned flows**
 
 1. **Upload**: `POST /claims/{id}/evidence/upload-url` → `{ uploadUrl, fileKey, headers? }` — client **PUT** to quarantine key (content-type, max 10MB enforced server-side on complete).
-2. **Download (clean)**: `GET /evidence/{id}/download-url` → `{ url, expiresAt }` — presigned GET on `R2_EVIDENCE_BUCKET`.
+2. **Download (clean, MVP)**: `GET /evidence/{id}/download-url` → `{ url, expiresAt }` — presigned GET on `R2_EVIDENCE_BUCKET` only.
 
-**MVP 접근 정책 (기본값)**
+### 7.4 파일 전달 — MVP vs Phase 2 (확정)
 
-- **Clean files**: **presigned download URL** (예: 15분 TTL). 앱은 `WebBrowser` / `Linking`으로 열기.
-- **공개 CDN**: R2 **custom domain** + public bucket 또는 Cloudflare CDN 캐시 — **Phase 2 후보** (링크 공유·오픈그래프에 유리). MVP는 signed URL로 시작해 유출·핫링크 리스크를 낮춘다.
+| Phase | Clean evidence delivery | Notes |
+|-------|-------------------------|--------|
+| **MVP (Phase 0–1)** | **Presigned download URLs only** | Short TTL (e.g. 15 min); app opens via `WebBrowser` / `Linking`. No public object URLs. |
+| **Phase 2+** | **Public CDN** via **R2 custom domain** on `R2_EVIDENCE_BUCKET` | Optional stable URLs for sharing / OpenGraph; can coexist with presigned for private drafts. |
+
+MVP env: `PRESIGNED_DOWNLOAD_TTL_SECONDS` only. Phase 2 adds e.g. `R2_PUBLIC_CDN_BASE=https://evidence.example.com` (see §12 Phase 2).
 
 **서버 env (R2)**
 
@@ -588,10 +590,10 @@ R2_SECRET_ACCESS_KEY=...
 R2_ENDPOINT=https://<account_id>.r2.cloudflarestorage.com
 R2_QUARANTINE_BUCKET=factfulness-quarantine
 R2_EVIDENCE_BUCKET=factfulness-evidence
-# Optional Phase 2 public CDN base (not MVP default)
-# R2_PUBLIC_CDN_BASE=https://evidence.example.com
 PRESIGNED_UPLOAD_TTL_SECONDS=900
 PRESIGNED_DOWNLOAD_TTL_SECONDS=900
+# Phase 2 only — public CDN custom domain (not used in MVP)
+# R2_PUBLIC_CDN_BASE=https://evidence.example.com
 ```
 
 **작업 항목**
@@ -722,31 +724,54 @@ RATE_LIMIT_EVIDENCE_CREATE_PER_USER_PER_HOUR=30
 
 1. `POST /claims/{id}/comments` body `body`에 대해 **항상** 검사 (클라이언트 우회 방지).
 2. **Normalize**: Unicode NFKC, lower-case, strip zero-width chars, collapse whitespace (모바일 `normalizeModerationText`와 동일 규칙).
-3. **Match**: configurable **Korean + English** substring list against normalized text (first hit wins).
+3. **Match** (확정 알고리즘 — 모바일 `bannedWords.ts`와 동일):
+   - **Normalize** text once (NFKC, lower-case, strip zero-width, collapse whitespace).
+   - **ASCII-only list entries** (LDNOOBW `en`): **word-boundary** match (avoid `ass` in `class`, `sex` in unrelated tokens).
+   - **Hangul or mixed entries** (LDNOOBW `ko`): **substring** match on normalized text; terms **&lt; 2** graphemes skipped. Korean agglutination can still cause **false positives** — tune `scripts/banned-words-exclusions.json` and rely on **reports/`hidden_at`** as second layer.
 4. **Reject**: HTTP **422** with `{ "code": "COMMENT_BANNED", "message": "..." }` — no row insert.
 
-**금지어 목록 위치 (서버 MVP)**
+**금지어 목록 출처 (확정 — 오픈소스)**
 
-```
-backend/config/banned_words.txt   # one term per line; # comments allowed
-# loaded at startup; hot-reload optional via admin API (Phase 2)
+| Language | Upstream | License | Vendored path |
+|----------|----------|---------|---------------|
+| English | [LDNOOBW `en`](https://github.com/LDNOOBW/List-of-Dirty-Naughty-Obscene-and-Otherwise-Bad-Words/blob/master/en) | **CC BY 4.0** | `third_party/ldnoobw/en` |
+| Korean | [LDNOOBW `ko`](https://github.com/LDNOOBW/List-of-Dirty-Naughty-Obscene-and-Otherwise-Bad-Words/blob/master/ko) | **CC BY 4.0** | `third_party/ldnoobw/ko` |
+
+Attribution: `third_party/ldnoobw/ATTRIBUTION.md` (required by CC BY 4.0).
+
+**Import / update**
+
+```bash
+# Refresh vendored upstream (optional), then regenerate:
+curl -sL .../master/en -o third_party/ldnoobw/en
+curl -sL .../master/ko -o third_party/ldnoobw/ko
+node scripts/build-banned-words.mjs
 ```
 
-또는 env `BANNED_WORDS_PATH`. Staging/production는 **비공개** repo 또는 secrets volume에 배포.
+Outputs:
+
+- `backend/config/banned_words.txt` — server load at startup (`BANNED_WORDS_PATH` override optional)
+- `mobile/src/moderation/bannedWords.generated.ts` — client UX list (must stay in sync via same script)
+
+Manual exclusions (false positives): `scripts/banned-words-exclusions.json` (currently trims ambiguous **English** LDNOOBW entries such as `sex`, `anal`; extend as needed).
 
 **모바일 (UX only)**
 
-- `mobile/src/moderation/bannedWords.ts` — **PLACEHOLDER** list; 즉시 입력 피드백용. 서버 목록과 **대략** 맞추되 SSOT는 서버.
-- `LocalRepository.addComment` / API 호출 전 `isCommentAllowed` — 서버는 재검증.
+- `mobile/src/moderation/bannedWords.ts` — matching helpers + imports **`bannedWords.generated.ts`**
+- `LocalRepository.addComment` / API 호출 전 `isCommentAllowed` — server는 동일 목록·규칙으로 재검증.
 
-**2차 모더레이션 (기존)**
+**2차 모더레이션 (MVP — 확정)**
 
-- User **reports** + moderator **`hidden_at`** on comments/topics/claims — 금지어에 걸리지 않은 악성 콘텐츠용.
+- User **reports** + moderator sets **`hidden_at`** on comments/topics/claims (DB/API). **No admin web UI in MVP** — ops via SQL/staging scripts or minimal internal API only if needed before Phase 2.
 
-**Moderation hooks (스키마 준비)**
+**Post-MVP (Phase 2+)**
 
-- [ ] `topics.status`, `claims.status`, `evidence.hidden_at`
-- [ ] Admin API **후순위** — `PATCH /admin/claims/:id/hide`
+- Admin moderation dashboard + `PATCH /admin/.../hide` tooling (see §12).
+
+**Moderation hooks (스키마 — MVP)**
+
+- [ ] `content_reports` + `hidden_at` on topics/claims/comments/evidence
+- [ ] **No admin UI in MVP** — manual hide via DB/staging scripts until Phase 2
 
 ---
 
@@ -765,13 +790,15 @@ backend/config/banned_words.txt   # one term per line; # comments allowed
 
 - [ ] Auth 벤더 연동 + 401 UX in app
 - [ ] Rate limits
-- [ ] Seed on staging; 제품 결정 반영 (댓글 vote, moderation)
+- [ ] Seed on staging; 제품 결정 반영 (댓글 vote, LDNOOBW banned words, reports/`hidden_at`)
+- [ ] **R2 two-bucket** upload + **presigned download only** (§7.3–7.4)
 - [ ] 클라이언트 `factScore` / home settled 계산 제거
 
 ### Phase 2 — 운영 · 확장
 
-- [ ] File upload evidence
-- [ ] Admin/moderation
+- [ ] **R2 public CDN** — custom domain on clean evidence bucket (§7.4)
+- [ ] File upload evidence (if not fully in Phase 1)
+- [ ] **Admin moderation UI** + admin hide APIs (MVP is reports + `hidden_at` only, no screen)
 - [ ] Link archive / preview (OpenGraph)
 - [ ] Search, notifications
 - [ ] (선택) websocket live scores
@@ -788,17 +815,19 @@ HANDOFF §6과 동일. Highlights:
 - [x] **ClamAV** server-side scan; `pending`|`infected` files **excluded** from C1/C3
 - [x] File C3: **`file:{evidence_id}`** per upload (decided)
 - [x] **Production rate limits** = `mobile/src/config/rateLimits.ts` (decided)
-- [x] **Cloudflare R2** object storage (quarantine + evidence buckets, presigned upload/download) — §7.3
-- [x] **Comment banned-word filter** (server authoritative + mobile UX util) — §11.1
+- [x] **Cloudflare R2** — **two buckets** (quarantine + clean evidence) — §7.3
+- [x] **File delivery MVP** — presigned downloads only; **Phase 2** public R2 custom-domain CDN — §7.4
+- [x] **Comment banned-word filter** — LDNOOBW en+ko (CC BY 4.0), build script — §11.1
 - [x] **No offline mutation queue** — fail + retry UX — §9.3
 - [x] **Trust denied** on file evidence until `scan_status=clean` (pending/infected) — mobile `trustEligibility` + API `403`
+- [x] **Admin moderation MVP** — user reports + `hidden_at` only; **no admin screen** (Phase 2 tooling)
 
 ## 14. 아직 열린 결정
 
-- [ ] R2 **public CDN** custom domain vs presigned-only long-term (MVP default: presigned download)
-- [ ] Single-bucket prefix layout vs two-bucket layout (MVP: two buckets)
-- [ ] Banned-word list **curation process** (who updates `banned_words.txt`, locale-specific expansions)
-- [ ] Admin/moderation tooling beyond reports + `hidden_at`
+- [ ] R2 **custom domain** hostname / TLS / cache policy details (Phase 2)
+- [ ] Additional banned-word sources or locale-specific lists beyond LDNOOBW (if community needs stricter KO coverage)
+- [ ] Link archive / preview (OpenGraph), search, notifications
+- [ ] Internal ops workflow for `hidden_at` before admin UI exists (runbook only)
 
 ---
 
@@ -811,7 +840,10 @@ HANDOFF §6과 동일. Highlights:
 | `mobile/src/data/types.ts` | DTO 필드 |
 | `mobile/src/data/seed.ts` | 시드·golden fixture |
 | `mobile/src/scoring/*` | 서버 포팅 원본 |
-| `mobile/src/moderation/bannedWords.ts` | Client UX banned-word check (placeholder list) |
+| `scripts/build-banned-words.mjs` | Regenerate server + mobile word lists from LDNOOBW |
+| `third_party/ldnoobw/` | Vendored LDNOOBW sources + CC BY attribution |
+| `mobile/src/moderation/bannedWords.ts` | Match helpers (word boundary vs Hangul substring) |
+| `mobile/src/moderation/bannedWords.generated.ts` | Generated word list (run build script) |
 | `mobile/src/moderation/trustEligibility.ts` | Trust gating on file `scan_status` |
 | `mobile/src/app/*` | 화면별 repo 호출 |
 | [`HANDOFF.md`](./HANDOFF.md) | 제품·규칙·확정/열린 결정 |

@@ -5,6 +5,7 @@ export default defineConfig({
   test: {
     globals: false,
     environment: "node",
+    setupFiles: ["./src/test/asyncStorageMock.ts"],
   },
   resolve: {
     alias: {

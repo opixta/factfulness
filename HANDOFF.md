@@ -175,7 +175,7 @@ npx expo start          # QR / 시뮬레이터 / w 키로 웹
 | API | **FastAPI (Python)** — `mobile/src/scoring` 로직을 Python으로 미러 또는 공유 패키지화 |
 | DB | **PostgreSQL** |
 | Auth | **Supabase Auth** (확정) — Expo `@supabase/supabase-js`, FastAPI JWT 검증 |
-| 파일 | 1단계는 URL만, 이후 S3/R2 |
+| 파일 | **Cloudflare R2** (quarantine → ClamAV → clean bucket) — [`BACKEND.md`](./BACKEND.md) §7.3 |
 | 배포 | Railway / Fly.io / Render + Managed Postgres |
 
 모놀리식 하나면 충분. 점수 재계산은 MVP에서 **동기**가 디버깅에 유리.
@@ -257,15 +257,22 @@ scoring/
 
 ### 2026-11-04 (라운드 3 — 보안·운영 확정)
 
-- **바이러스 스캔**: 업로드 파일 **서버-side ClamAV** (`clamd` sidecar/컨테이너) — `pending` → scan → `clean`|`infected`; 감염 시 거부/삭제, **C1/C3 미반영**
-- **파일 C3**: **`file:{evidence_id}`** per upload (업로더별 묶음 **아님** — 확정)
-- **Rate limits**: `mobile/src/config/rateLimits.ts` 숫자 = **프로덕션** (확정)
+- **바이러스 스캔**: 업로드 파일 **서버-side ClamAV** — `pending` → `clean`|`infected`; **C1/C3 미반영** when not clean
+- **파일 C3**: **`file:{evidence_id}`** per upload (확정)
+- **Rate limits**: `mobile/src/config/rateLimits.ts` = **프로덕션** (확정)
+
+### 2026-11-04 (라운드 4 — 저장·모더레이션·오프라인·trust)
+
+- **객체 저장**: **Cloudflare R2** (S3-compatible). Quarantine + clean evidence **버킷**; presigned upload/download. Clean 파일 MVP는 **presigned URL** (공개 CDN/custom domain은 후보).
+- **댓글 모더레이션**: **금지어 목록** 자동 차단 (KO+EN, normalize 후 substring). 서버 SSOT `backend/config/banned_words.txt`; API `422 COMMENT_BANNED`. 모바일 `mobile/src/moderation/bannedWords.ts`는 placeholder + 즉시 UX. **신고/`hidden_at`**은 2차.
+- **오프라인 mutation queue**: **MVP 제외** — 오프라인 시 쓰기 실패, **에러/재시도** (queue 없음).
+- **Trust on pending/infected file evidence**: **금지** — `canEndorseTrustEvidence`; UI 비활성 + 안내.
 
 ## 7. 아직 열린 결정
 
-- 객체 저장소/CDN 벤더·경로 규칙 (S3/R2 등)
-- 댓글/본문 profanity·모더레이션 자동화 세부
-- 오프라인 mutation queue (모바일)
+- R2 clean 파일 **공개 CDN** vs presigned-only (MVP: presigned)
+- 금지어 목록 **운영·확장** (누가/어떻게 갱신)
+- (기타) Admin 모더레이션 UI, 링크 아카이브 등 — [`BACKEND.md`](./BACKEND.md) §14
 
 ---
 

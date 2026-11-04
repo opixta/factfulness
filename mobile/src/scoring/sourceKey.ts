@@ -4,8 +4,7 @@ import { sourceDomain } from "./domain";
 /**
  * C3 distinct-source key.
  * - URL evidence: normalized hostname
- * - File evidence (default): `file:{evidenceId}` — each upload is its own source
- *   (PO default; revisit if grouping by uploader is preferred)
+ * - File evidence: `file:{evidenceId}` — **each upload is its own distinct C3 source** (decided)
  */
 export function evidenceSourceKey(e: EvidenceInput): string {
   if (e.fileId) {

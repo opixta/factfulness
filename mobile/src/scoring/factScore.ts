@@ -4,6 +4,10 @@ import {
   RULE_VERSION,
   TRUST_MIN,
 } from "./config";
+import {
+  aggregateDomainWeights,
+  distinctDomainCount,
+} from "./domain";
 import { filterEligibleEvidence } from "./eligibility";
 import type { EvidenceInput, FactScoreResult } from "./types";
 
@@ -12,26 +16,28 @@ import type { EvidenceInput, FactScoreResult } from "./types";
  */
 export function factScore(evidence: EvidenceInput[]): FactScoreResult {
   const eligible = filterEligibleEvidence(evidence);
-  const eligibleTrue = eligible.filter((e) => e.stance === "true");
-  const eligibleFalse = eligible.filter((e) => e.stance === "false");
+  const eligibleDirectional = eligible.filter((e) => e.stance !== "neutral");
+  const eligibleTrue = eligibleDirectional.filter((e) => e.stance === "true");
+  const eligibleFalse = eligibleDirectional.filter((e) => e.stance === "false");
   const reasons: string[] = [];
 
-  const c2pass = eligible.length > 0;
+  const c2pass = eligibleDirectional.length > 0;
   if (!c2pass) {
     reasons.push(`신뢰 추천 ≥${TRUST_MIN}인 출처 자료가 부족합니다 (C1·C2).`);
   }
 
-  const trueOk = eligibleTrue.length >= MIN_ELIGIBLE_SAME_DIR;
-  const falseOk = eligibleFalse.length >= MIN_ELIGIBLE_SAME_DIR;
+  const eligibleTrueDomains = distinctDomainCount(eligibleTrue);
+  const eligibleFalseDomains = distinctDomainCount(eligibleFalse);
+  const trueOk = eligibleTrueDomains >= MIN_ELIGIBLE_SAME_DIR;
+  const falseOk = eligibleFalseDomains >= MIN_ELIGIBLE_SAME_DIR;
 
   if (!trueOk && !falseOk) {
     reasons.push(
-      `동일 방향 적격 증거 ≥${MIN_ELIGIBLE_SAME_DIR}건 조건을 충족하지 못했습니다 (C3).`,
+      `동일 방향 서로 다른 출처 도메인 ≥${MIN_ELIGIBLE_SAME_DIR}개 조건을 충족하지 못했습니다 (C3).`,
     );
   }
 
-  const wTrue = eligibleTrue.reduce((s, e) => s + e.trust, 0);
-  const wFalse = eligibleFalse.reduce((s, e) => s + e.trust, 0);
+  const { wTrue, wFalse } = aggregateDomainWeights(eligibleDirectional);
   const wSum = wTrue + wFalse;
 
   let status: FactScoreResult["status"] = "pending";
@@ -66,8 +72,8 @@ export function factScore(evidence: EvidenceInput[]): FactScoreResult {
   return {
     status,
     factPct,
-    eligibleTrue: eligibleTrue.length,
-    eligibleFalse: eligibleFalse.length,
+    eligibleTrue: eligibleTrueDomains,
+    eligibleFalse: eligibleFalseDomains,
     wTrue,
     wFalse,
     gatePassed: status === "fact" || status === "lie",

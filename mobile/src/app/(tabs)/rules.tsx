@@ -42,7 +42,10 @@ export default function RulesScreen() {
           </Text>
           <Text style={styles.bullet}>C2 자료가 커뮤니티에서 신뢰 추천 ≥ {TRUST_MIN}</Text>
           <Text style={styles.bullet}>
-            C3 동일 방향 적격 증거 ≥ {MIN_ELIGIBLE_SAME_DIR}건
+            C3 동일 방향 **서로 다른 출처 도메인** ≥ {MIN_ELIGIBLE_SAME_DIR}개
+          </Text>
+          <Text style={styles.bullet}>
+            중립(맥락) 자료는 팩트 점수 적격·가중치에 포함되지 않음
           </Text>
           <Text style={styles.bullet}>C4 반대 방향 적격 증거가 더 많지 않음</Text>
           <Text style={styles.formula}>

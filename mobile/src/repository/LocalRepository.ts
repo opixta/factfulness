@@ -178,11 +178,7 @@ export class LocalFactfulnessRepository implements FactfulnessRepository {
     this.data.comments[claimId].unshift(item);
 
     if (vote === "true" || vote === "false") {
-      const found = this.findClaim(claimId);
-      if (found) {
-        if (vote === "true") found.claim.votesTrue += 1;
-        else found.claim.votesFalse += 1;
-      }
+      this.castVote(claimId, vote);
     }
     this.notify();
     return item;

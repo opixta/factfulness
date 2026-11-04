@@ -58,6 +58,17 @@ describe("edge cases", () => {
     ).toBe(false);
   });
 
+  it("neutral stance is never eligible for fact scoring", () => {
+    expect(
+      isEvidenceEligible({
+        id: "n",
+        url: "https://example.com",
+        stance: "neutral",
+        trust: 10,
+      }),
+    ).toBe(false);
+  });
+
   it("split when eligible but below FACT_THRESHOLD", () => {
     const result = factScore([
       { id: "a", url: "https://a.com", stance: "true", trust: 3 },
@@ -70,9 +81,31 @@ describe("edge cases", () => {
     expect((result.factPct ?? 0) / 100).toBeLessThan(FACT_THRESHOLD);
   });
 
-  it("neutral stance counts toward eligibility pool but not weight sums", () => {
+  it("C3 counts distinct domains only (same domain twice = one toward MIN)", () => {
     const result = factScore([
-      { id: "n", url: "https://n.com", stance: "neutral", trust: 5 },
+      { id: "a", url: "https://www.example.com/a", stance: "false", trust: 10 },
+      { id: "b", url: "https://example.com/b", stance: "false", trust: 10 },
+      { id: "c", url: "https://other.org", stance: "true", trust: 3 },
+    ]);
+    expect(result.eligibleFalse).toBe(1);
+    expect(result.status).toBe("pending");
+  });
+
+  it("same-domain trust sums into one weight bucket", () => {
+    const result = factScore([
+      { id: "a", url: "https://a.com/1", stance: "true", trust: 8 },
+      { id: "b", url: "https://a.com/2", stance: "true", trust: 7 },
+      { id: "c", url: "https://b.com", stance: "false", trust: 3 },
+      { id: "d", url: "https://c.com", stance: "false", trust: 3 },
+    ]);
+    expect(result.wTrue).toBe(15);
+    expect(result.eligibleTrue).toBe(1);
+    expect(result.status).toBe("split");
+  });
+
+  it("neutral does not contribute to weights or domain counts", () => {
+    const result = factScore([
+      { id: "n", url: "https://n.com", stance: "neutral", trust: 50 },
       { id: "t1", url: "https://t1.com", stance: "true", trust: 10 },
       { id: "t2", url: "https://t2.com", stance: "true", trust: 10 },
     ]);

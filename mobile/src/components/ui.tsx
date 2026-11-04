@@ -24,17 +24,25 @@ export function PrimaryButton({
   label,
   onPress,
   style,
+  disabled,
 }: {
   label: string;
   onPress: () => void;
   style?: object;
+  disabled?: boolean;
 }) {
   return (
     <Pressable
-      onPress={onPress}
-      style={({ pressed }) => [styles.primary, pressed && styles.pressed, style]}
+      onPress={disabled ? undefined : onPress}
+      disabled={disabled}
+      style={({ pressed }) => [
+        styles.primary,
+        disabled && styles.disabled,
+        pressed && !disabled && styles.pressed,
+        style,
+      ]}
     >
-      <Text style={styles.primaryText}>{label}</Text>
+      <Text style={[styles.primaryText, disabled && styles.disabledText]}>{label}</Text>
     </Pressable>
   );
 }
@@ -42,13 +50,23 @@ export function PrimaryButton({
 export function GhostButton({
   label,
   onPress,
+  disabled,
 }: {
   label: string;
   onPress: () => void;
+  disabled?: boolean;
 }) {
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => [styles.ghost, pressed && styles.pressed]}>
-      <Text style={styles.ghostText}>{label}</Text>
+    <Pressable
+      onPress={disabled ? undefined : onPress}
+      disabled={disabled}
+      style={({ pressed }) => [
+        styles.ghost,
+        disabled && styles.disabledGhost,
+        pressed && !disabled && styles.pressed,
+      ]}
+    >
+      <Text style={[styles.ghostText, disabled && styles.disabledText]}>{label}</Text>
     </Pressable>
   );
 }
@@ -97,4 +115,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   pressed: { opacity: 0.85, transform: [{ scale: 0.98 }] },
+  disabled: { opacity: 0.45 },
+  disabledGhost: { opacity: 0.45, backgroundColor: Colors.paper },
+  disabledText: { opacity: 0.7 },
 });

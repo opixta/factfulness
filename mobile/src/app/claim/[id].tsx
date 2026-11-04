@@ -21,6 +21,14 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { GhostButton, PrimaryButton } from "@/components/ui";
 import { ALLOWED_EVIDENCE_MIMES, MAX_EVIDENCE_FILE_BYTES } from "@/data/types";
 import { useClaimScores, useFactfulness } from "@/context/FactfulnessContext";
+import {
+  findBannedWord,
+  isCommentAllowed,
+} from "@/moderation/bannedWords";
+import {
+  canEndorseTrustEvidence,
+  trustEndorsementBlockReason,
+} from "@/moderation/trustEligibility";
 import { isEvidenceEligible, TRUST_MIN } from "@/scoring";
 import { toEvidenceInput } from "@/scoring/evidenceInput";
 import type { Stance } from "@/scoring/types";
@@ -104,8 +112,13 @@ export default function ClaimScreen() {
     setEvFileUri(file.uri);
   };
 
+  const commentBanned = findBannedWord(commentBody);
+  const commentBlockedMessage = commentBanned
+    ? "금지된 표현이 포함되어 있습니다. 표현을 수정해 주세요."
+    : null;
+
   const submitComment = () => {
-    if (!commentBody.trim()) return;
+    if (!commentBody.trim() || !isCommentAllowed(commentBody)) return;
     repo.addComment(id, { body: commentBody.trim(), vote: commentVote });
     setCommentBody("");
     setCommentVote("");
@@ -174,11 +187,22 @@ export default function ClaimScreen() {
                   <Text style={styles.hint}>첨부 파일: {e.fileName}</Text>
                 ) : null}
                 <View style={styles.trustRow}>
-                  <Text style={styles.hint}>
-                    신뢰 추천 {e.trust}
-                    {e.trust < TRUST_MIN ? ` (적격 ${TRUST_MIN}+)` : ""}
-                  </Text>
-                  <GhostButton label="추천 +1" onPress={() => repo.addTrust(id, e.id)} />
+                  <View style={styles.trustMeta}>
+                    <Text style={styles.hint}>
+                      신뢰 추천 {e.trust}
+                      {e.trust < TRUST_MIN ? ` (적격 ${TRUST_MIN}+)` : ""}
+                    </Text>
+                    {trustEndorsementBlockReason(e) ? (
+                      <Text style={styles.trustBlockNote}>
+                        {trustEndorsementBlockReason(e)}
+                      </Text>
+                    ) : null}
+                  </View>
+                  <GhostButton
+                    label="추천 +1"
+                    disabled={!canEndorseTrustEvidence(e)}
+                    onPress={() => repo.addTrust(id, e.id)}
+                  />
                 </View>
               </Card>
             );
@@ -231,6 +255,9 @@ export default function ClaimScreen() {
 
           <Card>
             <Field label="댓글" value={commentBody} onChangeText={setCommentBody} multiline />
+            {commentBlockedMessage ? (
+              <Text style={styles.error}>{commentBlockedMessage}</Text>
+            ) : null}
             <Text style={styles.fieldLabel}>투표 연동</Text>
             <View style={styles.chipRow}>
               {(
@@ -249,7 +276,11 @@ export default function ClaimScreen() {
                 </Pressable>
               ))}
             </View>
-            <PrimaryButton label="댓글 남기기" onPress={submitComment} />
+            <PrimaryButton
+              label="댓글 남기기"
+              disabled={!commentBody.trim() || Boolean(commentBanned)}
+              onPress={submitComment}
+            />
           </Card>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -376,6 +407,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     marginTop: Spacing.sm,
+  },
+  trustMeta: { flex: 1, marginRight: Spacing.sm },
+  trustBlockNote: {
+    fontFamily: Fonts.ui,
+    fontSize: 11,
+    color: Colors.coral,
+    marginTop: 4,
+    lineHeight: 16,
   },
   hint: { fontFamily: Fonts.ui, fontSize: 12, color: Colors.inkSoft },
   formTitle: { fontFamily: Fonts.uiBold, fontSize: 16, marginBottom: Spacing.md, color: Colors.ink },

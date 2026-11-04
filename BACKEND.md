@@ -43,7 +43,7 @@
 | DB | **PostgreSQL 16+** | JSONB(`gate_reasons`), UUID PK |
 | 마이그레이션 | **Alembic** | `backend/alembic/` |
 | Auth | **Supabase Auth** (확정) | JWT(`Authorization: Bearer`), `users.supabase_sub` 매핑 — §6 |
-| 객체 저장 (2단계) | **S3 / R2** | presigned upload |
+| 객체 저장 (2단계) | **Cloudflare R2** (S3-compatible API) | presigned upload → quarantine → promote to clean bucket — §7.3 |
 | 배포 | Railway / Fly.io / Render + Managed Postgres | staging + production |
 
 **확정 (HANDOFF §6 요약)**: 임계값 유지 · C3 도메인 distinct · 중립 제외 · 확정 후 재계산 · 즉시 공개+신고 숨김 · 읽기 public / 쓰기 로그인 · Supabase · 댓글 vote=1표.
@@ -348,14 +348,14 @@ interface CommentDto {
 | `proposeClaim` | `new-claim/[topicId]` | `POST /topics/{topicId}/claims` | `{ text, reason? }` | `{ claim }` + topic `updatedAt` 갱신 |
 | `castVote` | `claim/[id]` True/False | `PUT /claims/{claimId}/vote` | `{ value: "true" \| "false" }` | `{ scores: ClaimScoresDto }` |
 | `addEvidence` | claim form | `POST /claims/{claimId}/evidence` | `{ title, url, stance, summary }` | `{ evidence: EvidenceDto, scores }` |
-| `addTrust` | claim 추천 +1 | `POST /evidence/{evidenceId}/trust` | `{}` | `{ evidence: EvidenceDto, scores }` — 409 if already trusted |
-| `addComment` | claim 댓글 | `POST /claims/{claimId}/comments` | `{ body, vote?: "" \| "true" \| "false" }` | `{ comment, scores }` — `vote` set 시 **동일** `PUT /vote` 처리 |
+| `addComment` | claim 댓글 | `POST /claims/{claimId}/comments` | `{ body, vote?: "" \| "true" \| "false" }` | `{ comment, scores }` — `vote` set 시 **동일** `PUT /vote` 처리; **`422 COMMENT_BANNED`** if banned-word match (§11) |
+| `addTrust` | claim 추천 +1 | `POST /evidence/{evidenceId}/trust` | `{}` | `{ evidence: EvidenceDto, scores }` — **409** if already trusted; **`403 TRUST_FILE_NOT_READY`** if file `scan_status` ≠ `clean` |
 
 **Validation (서버)**
 
 - `url`: http(s) scheme, max length, **선택** SSRF fetch 금지 (링크만 저장)
 - `stance`: enum
-- `text`/`body`: max length, 기본 profanity hook **미결정**
+- `text`/`body`: max length; **banned-word filter** before insert (§11) → `422 COMMENT_BANNED`
 
 **작업 항목**
 
@@ -522,9 +522,9 @@ def verify_supabase_token(token: str, secret: str, project_url: str) -> dict:
 
 | scan_status | C1 (file) | C3 `file:{id}` | trust 집계 |
 |-------------|-----------|----------------|------------|
-| `pending`   | ❌        | ❌             | 허용 여부 **미공개** — MVP: trust on pending file **금지** 권장 |
+| `pending`   | ❌        | ❌             | ❌ **확정** — trust 금지 (모바일 `canEndorseTrustEvidence`) |
 | `clean`     | ✅ (if mime/size ok) | ✅ | ✅ |
-| `infected`  | ❌        | ❌             | ❌ (row rejected) |
+| `infected`  | ❌        | ❌             | ❌ **확정** — trust 금지 |
 
 URL-only evidence: `scan_status` **NULL** — ClamAV 대상 아님.
 
@@ -540,9 +540,66 @@ URL-only evidence: `scan_status` **NULL** — ClamAV 대상 아님.
 CLAMAV_HOST=clamd
 CLAMAV_PORT=3310
 CLAMAV_TIMEOUT_SECONDS=120
-QUARANTINE_BUCKET=...
-EVIDENCE_BUCKET=...
+# R2 — see §7.3
+R2_ACCOUNT_ID=
+R2_ACCESS_KEY_ID=
+R2_SECRET_ACCESS_KEY=
+R2_ENDPOINT=https://<account_id>.r2.cloudflarestorage.com
+R2_QUARANTINE_BUCKET=factfulness-quarantine
+R2_EVIDENCE_BUCKET=factfulness-evidence
 ```
+
+### 7.3 객체 저장 — Cloudflare R2 (확정)
+
+**벤더**: **Cloudflare R2** only (S3-compatible API via `boto3` / AWS SDK). Generic S3 is out of scope for MVP docs.
+
+**버킷 레이아웃 (MVP 기본 — 두 버킷)**
+
+| 버킷 | 용도 | 공개 접근 |
+|------|------|-----------|
+| `R2_QUARANTINE_BUCKET` | presigned **upload** landing; ClamAV 입력 | **비공개** — presigned GET만 (worker) |
+| `R2_EVIDENCE_BUCKET` | `scan_status=clean` promote 대상 | MVP: **presigned GET** (짧은 TTL)로 앱/웹 다운로드 |
+
+**대안 (미구현, 문서만)**: 단일 버킷 + prefix `quarantine/` vs `clean/` — 운영 단순화 시 전환 가능; env는 `R2_BUCKET` + prefix vars로 치환.
+
+**Object key (제안)**
+
+```
+quarantine/{claim_id}/{evidence_id}/{uuid}.{ext}   # upload 완료 ~ scan 전
+evidence/{claim_id}/{evidence_id}/{uuid}.{ext}     # clean promote 후 DB file_key
+```
+
+**Presigned flows**
+
+1. **Upload**: `POST /claims/{id}/evidence/upload-url` → `{ uploadUrl, fileKey, headers? }` — client **PUT** to quarantine key (content-type, max 10MB enforced server-side on complete).
+2. **Download (clean)**: `GET /evidence/{id}/download-url` → `{ url, expiresAt }` — presigned GET on `R2_EVIDENCE_BUCKET`.
+
+**MVP 접근 정책 (기본값)**
+
+- **Clean files**: **presigned download URL** (예: 15분 TTL). 앱은 `WebBrowser` / `Linking`으로 열기.
+- **공개 CDN**: R2 **custom domain** + public bucket 또는 Cloudflare CDN 캐시 — **Phase 2 후보** (링크 공유·오픈그래프에 유리). MVP는 signed URL로 시작해 유출·핫링크 리스크를 낮춘다.
+
+**서버 env (R2)**
+
+```
+R2_ACCOUNT_ID=...
+R2_ACCESS_KEY_ID=...
+R2_SECRET_ACCESS_KEY=...
+R2_ENDPOINT=https://<account_id>.r2.cloudflarestorage.com
+R2_QUARANTINE_BUCKET=factfulness-quarantine
+R2_EVIDENCE_BUCKET=factfulness-evidence
+# Optional Phase 2 public CDN base (not MVP default)
+# R2_PUBLIC_CDN_BASE=https://evidence.example.com
+PRESIGNED_UPLOAD_TTL_SECONDS=900
+PRESIGNED_DOWNLOAD_TTL_SECONDS=900
+```
+
+**작업 항목**
+
+- [ ] R2 API token (Object Read & Write) scoped to both buckets
+- [ ] Lifecycle: delete quarantine object after scan (clean copy + infected purge)
+- [ ] CORS on quarantine bucket for mobile presigned PUT origins
+- [ ] DB `evidence.quarantine_file_key`, `evidence.file_key` mirror §7.1 flow
 
 ### 7.2 MIME · C3 · 포팅
 
@@ -588,11 +645,11 @@ EVIDENCE_BUCKET=...
 | mutations | POST/PUT | optimistic UI optional; **점수는 서버 응답으로 덮어쓰기** |
 | `subscribe` | polling or event emitter | mutation 후 `refresh()`; WebSocket **후순위** |
 
-### 9.3 오프라인 · 캐싱 (우선순위 낮음)
+### 9.3 오프라인 · 캐싱
 
-- [ ] Read-through cache (AsyncStorage) for topic list
-- [ ] Mutation queue offline — **미결정** (복잡도 큼)
-- [ ] Stale scores UI에 “연결 없음” 배지
+- [ ] Read-through cache (AsyncStorage) for topic list — **선택**
+- [x] **Mutation queue offline — MVP 제외 (확정)**. 네트워크 없을 때 쓰기 API는 **실패**; 앱은 **에러 + 재시도** UI (queueing 없음).
+- [ ] Stale scores UI에 “연결 없음” 배지 (read cache 사용 시)
 
 ### 9.4 환경 변수 (앱)
 
@@ -657,6 +714,34 @@ RATE_LIMIT_EVIDENCE_CREATE_PER_USER_PER_HOUR=30
 | mass topic/claim | throttle `POST /topics`; **신고 → hide** (`content_reports` + `hidden_at`) |
 | score manipulation | 클라이언트 factScore **제거**, server-only |
 | JWT theft | SecureStore, short TTL, refresh rotation |
+| profanity / slurs in comments | **1차: banned-word list (확정)** — §11.1; **2차: reports + `hidden_at`** |
+
+### 11.1 댓글 금지어 — 자동 차단 (확정)
+
+**서버 (authoritative)**
+
+1. `POST /claims/{id}/comments` body `body`에 대해 **항상** 검사 (클라이언트 우회 방지).
+2. **Normalize**: Unicode NFKC, lower-case, strip zero-width chars, collapse whitespace (모바일 `normalizeModerationText`와 동일 규칙).
+3. **Match**: configurable **Korean + English** substring list against normalized text (first hit wins).
+4. **Reject**: HTTP **422** with `{ "code": "COMMENT_BANNED", "message": "..." }` — no row insert.
+
+**금지어 목록 위치 (서버 MVP)**
+
+```
+backend/config/banned_words.txt   # one term per line; # comments allowed
+# loaded at startup; hot-reload optional via admin API (Phase 2)
+```
+
+또는 env `BANNED_WORDS_PATH`. Staging/production는 **비공개** repo 또는 secrets volume에 배포.
+
+**모바일 (UX only)**
+
+- `mobile/src/moderation/bannedWords.ts` — **PLACEHOLDER** list; 즉시 입력 피드백용. 서버 목록과 **대략** 맞추되 SSOT는 서버.
+- `LocalRepository.addComment` / API 호출 전 `isCommentAllowed` — 서버는 재검증.
+
+**2차 모더레이션 (기존)**
+
+- User **reports** + moderator **`hidden_at`** on comments/topics/claims — 금지어에 걸리지 않은 악성 콘텐츠용.
 
 **Moderation hooks (스키마 준비)**
 
@@ -703,13 +788,17 @@ HANDOFF §6과 동일. Highlights:
 - [x] **ClamAV** server-side scan; `pending`|`infected` files **excluded** from C1/C3
 - [x] File C3: **`file:{evidence_id}`** per upload (decided)
 - [x] **Production rate limits** = `mobile/src/config/rateLimits.ts` (decided)
+- [x] **Cloudflare R2** object storage (quarantine + evidence buckets, presigned upload/download) — §7.3
+- [x] **Comment banned-word filter** (server authoritative + mobile UX util) — §11.1
+- [x] **No offline mutation queue** — fail + retry UX — §9.3
+- [x] **Trust denied** on file evidence until `scan_status=clean` (pending/infected) — mobile `trustEligibility` + API `403`
 
 ## 14. 아직 열린 결정
 
-- [ ] Object storage / CDN vendor & key layout (quarantine vs public buckets)
-- [ ] Profanity / automated moderation rules on plain-text comments
-- [ ] Offline mutation queue on mobile
-- [ ] Trust on `scan_status=pending` files (MVP recommendation: deny)
+- [ ] R2 **public CDN** custom domain vs presigned-only long-term (MVP default: presigned download)
+- [ ] Single-bucket prefix layout vs two-bucket layout (MVP: two buckets)
+- [ ] Banned-word list **curation process** (who updates `banned_words.txt`, locale-specific expansions)
+- [ ] Admin/moderation tooling beyond reports + `hidden_at`
 
 ---
 
@@ -722,6 +811,8 @@ HANDOFF §6과 동일. Highlights:
 | `mobile/src/data/types.ts` | DTO 필드 |
 | `mobile/src/data/seed.ts` | 시드·golden fixture |
 | `mobile/src/scoring/*` | 서버 포팅 원본 |
+| `mobile/src/moderation/bannedWords.ts` | Client UX banned-word check (placeholder list) |
+| `mobile/src/moderation/trustEligibility.ts` | Trust gating on file `scan_status` |
 | `mobile/src/app/*` | 화면별 repo 호출 |
 | [`HANDOFF.md`](./HANDOFF.md) | 제품·규칙·확정/열린 결정 |
 

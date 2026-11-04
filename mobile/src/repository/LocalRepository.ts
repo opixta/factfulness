@@ -9,6 +9,8 @@ import {
   appendClaimScoreHistory,
   touchTopicActivity,
 } from "@/repository/metrics";
+import { isCommentAllowed } from "@/moderation/bannedWords";
+import { canEndorseTrustEvidence } from "@/moderation/trustEligibility";
 
 export class LocalFactfulnessRepository implements FactfulnessRepository {
   private data: AppData;
@@ -33,6 +35,13 @@ export class LocalFactfulnessRepository implements FactfulnessRepository {
       // fall through to seed
     }
     return new LocalFactfulnessRepository(cloneSeedData());
+  }
+
+  /** Tests and storybook: in-memory repo without AsyncStorage. */
+  static createFromData(data: AppData): LocalFactfulnessRepository {
+    const raw = JSON.parse(JSON.stringify(data)) as Partial<AppData> &
+      Record<string, unknown>;
+    return new LocalFactfulnessRepository(migrateAppData(raw));
   }
 
   setLocalUser(userId: string, nickname: string): void {
@@ -190,7 +199,7 @@ export class LocalFactfulnessRepository implements FactfulnessRepository {
     if (!found) return;
     const list = this.data.evidence[claimId] ?? [];
     const item = list.find((x) => x.id === evidenceId);
-    if (item) {
+    if (item && canEndorseTrustEvidence(item)) {
       item.trust += 1;
       this.bumpTopic(claimId);
       this.snapshotClaim(claimId, found.topicId);
@@ -222,6 +231,9 @@ export class LocalFactfulnessRepository implements FactfulnessRepository {
     claimId: string,
     input: { body: string; vote?: "" | "true" | "false" },
   ): Comment {
+    if (!isCommentAllowed(input.body)) {
+      throw new Error("COMMENT_BANNED");
+    }
     const vote = input.vote ?? "";
     const item: Comment = {
       id: uid("cm"),

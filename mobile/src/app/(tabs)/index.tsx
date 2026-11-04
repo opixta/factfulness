@@ -4,8 +4,10 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { Card, Screen } from "@/components/layout";
 import { GhostButton, Pill, PrimaryButton } from "@/components/ui";
+import { topicDisplayTags, topicUpdatedLabel } from "@/data/topicDisplay";
 import { useFactfulness } from "@/context/FactfulnessContext";
 import { factScore } from "@/scoring";
+import { evidenceInputsFromList } from "@/scoring/evidenceInput";
 import { Colors, Fonts, Spacing } from "@/theme/brand";
 
 export default function HomeScreen() {
@@ -43,14 +45,7 @@ export default function HomeScreen() {
         renderItem={({ item: t }) => {
           const claims = repo.getClaims(t.id);
           const settled = claims.filter((c) => {
-            const fs = factScore(
-              repo.getEvidence(c.id).map((e) => ({
-                id: e.id,
-                url: e.url,
-                stance: e.stance,
-                trust: e.trust,
-              })),
-            );
+            const fs = factScore(evidenceInputsFromList(repo.getEvidence(c.id)));
             return fs.status === "fact" || fs.status === "lie";
           }).length;
 
@@ -58,12 +53,12 @@ export default function HomeScreen() {
             <Pressable onPress={() => router.push(`/topic/${t.id}`)}>
               <Card>
                 <View style={styles.metaRow}>
-                  {t.tags.map((tag) => (
+                  {topicDisplayTags(t).map((tag) => (
                     <Pill key={tag} label={tag} />
                   ))}
                 </View>
                 <Text style={styles.metaText}>
-                  {t.participants}명 참여 · 업데이트 {t.updatedAt}
+                  {t.participants}명 참여 · 업데이트 {topicUpdatedLabel(t)}
                 </Text>
                 <Text style={styles.topicTitle}>{t.title}</Text>
                 <Text style={styles.summary} numberOfLines={3}>

@@ -1,5 +1,17 @@
 import type { AppData } from "./types";
 
+function isoHoursAgo(h: number): string {
+  return new Date(Date.now() - h * 3600 * 1000).toISOString();
+}
+
+function isoDaysAgo(d: number): string {
+  return new Date(Date.now() - d * 24 * 3600 * 1000).toISOString();
+}
+
+function seedParticipantIds(prefix: string, count: number): string[] {
+  return Array.from({ length: count }, (_, i) => `${prefix}_p${i}`);
+}
+
 /** Seed data mirrored from web-prototype/app.js */
 export const seedData: AppData = {
   topics: [
@@ -10,7 +22,8 @@ export const seedData: AppData = {
         "언론·SNS에서 반복되는 주장입니다. 발전량 기준인지 설비 용량 기준인지에 따라 결론이 달라질 수 있어 세부 명제로 나눕니다.",
       tags: ["에너지", "통계", "정책"],
       participants: 128,
-      updatedAt: "2시간 전",
+      createdAt: isoHoursAgo(2),
+      updatedAt: isoHoursAgo(2),
     },
     {
       id: "t2",
@@ -19,7 +32,8 @@ export const seedData: AppData = {
         "특정 구간 공사 전후 체증 증가가 ‘전체 도시’ 효과처럼 일반화되고 있습니다. 측정 구간과 시간대를 분리해 검증합니다.",
       tags: ["교통", "도시"],
       participants: 76,
-      updatedAt: "어제",
+      createdAt: isoDaysAgo(10),
+      updatedAt: isoDaysAgo(1),
     },
   ],
   claims: {
@@ -171,8 +185,45 @@ export const seedData: AppData = {
       },
     ],
   },
+  topicParticipantUserIds: {
+    t1: seedParticipantIds("t1", 128),
+    t2: seedParticipantIds("t2", 76),
+  },
+  claimScoreHistory: {},
+  localUserId: "local_user",
 };
 
 export function cloneSeedData(): AppData {
   return JSON.parse(JSON.stringify(seedData)) as AppData;
+}
+
+export function migrateAppData(raw: Partial<AppData> & Record<string, unknown>): AppData {
+  const base = cloneSeedData();
+  const merged: AppData = {
+    ...base,
+    ...(raw as AppData),
+    topics: (raw.topics as AppData["topics"]) ?? base.topics,
+    claims: (raw.claims as AppData["claims"]) ?? base.claims,
+    evidence: (raw.evidence as AppData["evidence"]) ?? base.evidence,
+    comments: (raw.comments as AppData["comments"]) ?? base.comments,
+    topicParticipantUserIds:
+      (raw.topicParticipantUserIds as AppData["topicParticipantUserIds"]) ??
+      base.topicParticipantUserIds,
+    claimScoreHistory:
+      (raw.claimScoreHistory as AppData["claimScoreHistory"]) ?? {},
+    localUserId: (raw.localUserId as string) ?? base.localUserId,
+  };
+  for (const t of merged.topics) {
+    if (!t.createdAt) {
+      t.createdAt = new Date().toISOString();
+    }
+    if (t.updatedAt && !t.updatedAt.includes("T")) {
+      t.updatedAt = new Date().toISOString();
+    }
+    const ids = merged.topicParticipantUserIds[t.id];
+    if (ids) {
+      t.participants = ids.length;
+    }
+  }
+  return merged;
 }

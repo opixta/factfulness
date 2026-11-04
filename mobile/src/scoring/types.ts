@@ -4,7 +4,9 @@ export type FactStatus = "pending" | "fact" | "lie" | "split";
 
 export interface EvidenceInput {
   id: string;
-  url: string;
+  url?: string;
+  /** Uploaded file evidence — each id is a distinct C3 source (`file:{fileId}`). */
+  fileId?: string;
   stance: Stance;
   trust: number;
 }

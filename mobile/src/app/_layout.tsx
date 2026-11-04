@@ -16,6 +16,7 @@ import { useEffect } from "react";
 import { StatusBar } from "expo-status-bar";
 
 import { FactfulnessProvider } from "@/context/FactfulnessContext";
+import { UserProfileProvider } from "@/context/UserProfileContext";
 import { Colors } from "@/theme/brand";
 
 SplashScreen.preventAutoHideAsync();
@@ -44,8 +45,9 @@ export default function RootLayout() {
 
   return (
     <FactfulnessProvider>
-      <StatusBar style="dark" />
-      <Stack
+      <UserProfileProvider>
+        <StatusBar style="dark" />
+        <Stack
         screenOptions={{
           headerStyle: { backgroundColor: Colors.paper },
           headerTintColor: Colors.tealDeep,
@@ -70,7 +72,12 @@ export default function RootLayout() {
           name="new-claim/[topicId]"
           options={{ title: "세부 명제 제안", presentation: "modal" }}
         />
+        <Stack.Screen
+          name="onboarding-nickname"
+          options={{ title: "닉네임", presentation: "modal" }}
+        />
       </Stack>
+      </UserProfileProvider>
     </FactfulnessProvider>
   );
 }

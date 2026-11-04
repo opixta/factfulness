@@ -5,8 +5,8 @@ import {
   TRUST_MIN,
 } from "./config";
 import {
-  aggregateDomainWeights,
-  distinctDomainCount,
+  aggregateSourceWeights,
+  distinctSourceCount,
 } from "./domain";
 import { filterEligibleEvidence } from "./eligibility";
 import type { EvidenceInput, FactScoreResult } from "./types";
@@ -26,8 +26,8 @@ export function factScore(evidence: EvidenceInput[]): FactScoreResult {
     reasons.push(`신뢰 추천 ≥${TRUST_MIN}인 출처 자료가 부족합니다 (C1·C2).`);
   }
 
-  const eligibleTrueDomains = distinctDomainCount(eligibleTrue);
-  const eligibleFalseDomains = distinctDomainCount(eligibleFalse);
+  const eligibleTrueDomains = distinctSourceCount(eligibleTrue);
+  const eligibleFalseDomains = distinctSourceCount(eligibleFalse);
   const trueOk = eligibleTrueDomains >= MIN_ELIGIBLE_SAME_DIR;
   const falseOk = eligibleFalseDomains >= MIN_ELIGIBLE_SAME_DIR;
 
@@ -37,7 +37,7 @@ export function factScore(evidence: EvidenceInput[]): FactScoreResult {
     );
   }
 
-  const { wTrue, wFalse } = aggregateDomainWeights(eligibleDirectional);
+  const { wTrue, wFalse } = aggregateSourceWeights(eligibleDirectional);
   const wSum = wTrue + wFalse;
 
   let status: FactScoreResult["status"] = "pending";

@@ -6,7 +6,10 @@ export interface Topic {
   summary: string;
   tags: string[];
   participants: number;
+  /** ISO8601 — last activity on any claim in topic */
   updatedAt: string;
+  /** ISO8601 — topic creation (derived “신규” tag) */
+  createdAt: string;
 }
 
 export interface Claim {
@@ -15,7 +18,6 @@ export interface Claim {
   reason?: string;
   votesTrue: number;
   votesFalse: number;
-  /** Local-only: current user's vote for this claim */
   userVote?: "true" | "false";
 }
 
@@ -26,6 +28,10 @@ export interface Evidence {
   stance: Stance;
   summary: string;
   trust: number;
+  /** Local / future S3 — image or PDF only, max 10MB when uploaded */
+  fileName?: string;
+  fileMime?: string;
+  localFileUri?: string;
 }
 
 export interface Comment {
@@ -36,11 +42,43 @@ export interface Comment {
   at: string;
 }
 
+export interface ClaimScoreHistoryEntry {
+  computedAt: string;
+  ruleVersion: string;
+  opinionPct: number;
+  votesTrue: number;
+  votesFalse: number;
+  factStatus: string;
+  factPct: number | null;
+  wTrue: number;
+  wFalse: number;
+  eligibleTrue: number;
+  eligibleFalse: number;
+  gatePassed: boolean;
+  gateReasons: string[];
+}
+
 export interface AppData {
   topics: Topic[];
   claims: Record<string, Claim[]>;
   evidence: Record<string, Evidence[]>;
   comments: Record<string, Comment[]>;
+  /** Unique user ids with vote/evidence/comment/trust on a topic's claims */
+  topicParticipantUserIds: Record<string, string[]>;
+  claimScoreHistory: Record<string, ClaimScoreHistoryEntry[]>;
+  localUserId: string;
 }
 
-export const STORAGE_KEY = "@factfulness/app-data-v1";
+export const STORAGE_KEY = "@factfulness/app-data-v2";
+
+export const NEW_TOPIC_DAYS = 7;
+
+export const ALLOWED_EVIDENCE_MIMES = [
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+  "application/pdf",
+] as const;
+
+export const MAX_EVIDENCE_FILE_BYTES = 10 * 1024 * 1024;

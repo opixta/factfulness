@@ -10,6 +10,7 @@ import React, {
 import type { AppData } from "@/data/types";
 import { LocalFactfulnessRepository } from "@/repository/LocalRepository";
 import type { FactfulnessRepository } from "@/repository/types";
+import { evidenceInputsFromList } from "@/scoring/evidenceInput";
 import { factScore, opinionScore } from "@/scoring";
 
 interface FactfulnessContextValue {
@@ -69,13 +70,6 @@ export function useClaimScores(claimId: string) {
   if (!found) return null;
   const { claim } = found;
   const op = opinionScore(claim);
-  const fact = factScore(
-    evidence.map((e) => ({
-      id: e.id,
-      url: e.url,
-      stance: e.stance,
-      trust: e.trust,
-    })),
-  );
+  const fact = factScore(evidenceInputsFromList(evidence));
   return { claim, op, fact, evidence };
 }

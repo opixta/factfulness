@@ -1,4 +1,11 @@
-import type { AppData } from "./types";
+import type { AppData, Evidence } from "./types";
+import { DEFAULT_NOTIFICATION_PREFS } from "@/config/notifications";
+import { simulateLinkPreview } from "@/linkPreview/simulatePreview";
+
+function withUrlPreview(item: Evidence): Evidence {
+  if (!item.url?.trim()) return item;
+  return { ...item, ...simulateLinkPreview(item.url, item.title) };
+}
 
 function isoHoursAgo(h: number): string {
   return new Date(Date.now() - h * 3600 * 1000).toISOString();
@@ -68,84 +75,84 @@ export const seedData: AppData = {
   },
   evidence: {
     c1: [
-      {
+      withUrlPreview({
         id: "e1",
         title: "IEA Electricity 2024 — OECD average renewables share",
         url: "https://www.iea.org/",
         stance: "false",
         summary: "OECD 평균 재생 전력 비중이 한국 수치보다 높게 제시됨.",
         trust: 14,
-      },
-      {
+      }),
+      withUrlPreview({
         id: "e2",
         title: "한국전력통계 2023 발전량 구성",
         url: "https://www.kpx.or.kr/",
         stance: "false",
         summary: "국내 발전량 기준 재생 비중이 OECD 평균 아래로 나타남.",
         trust: 11,
-      },
-      {
+      }),
+      withUrlPreview({
         id: "e3",
         title: "블로그 요약: ‘이미 앞질렀다’ 주장",
         url: "https://example.com/blog",
         stance: "true",
         summary: "설비용량과 발전량을 혼용해 비중을 높게 해석.",
         trust: 2,
-      },
+      }),
     ],
     c2: [
-      {
+      withUrlPreview({
         id: "e4",
         title: "IRENA Capacity Statistics 2024",
         url: "https://www.irena.org/",
         stance: "true",
         summary: "설비용량 기준으로는 한국이 일부 OECD 국가 평균을 상회할 수 있음.",
         trust: 9,
-      },
-      {
+      }),
+      withUrlPreview({
         id: "e5",
         title: "산업부 재생에너지 보급통계",
         url: "https://www.motie.go.kr/",
         stance: "true",
         summary: "설비 기준 지표를 별도로 공표.",
         trust: 7,
-      },
-      {
+      }),
+      withUrlPreview({
         id: "e6",
         title: "반론 칼럼: 용량≠발전",
         url: "https://example.com/op-ed",
         stance: "false",
         summary: "용량 비중으로 ‘이미 넘었다’고 말하기엔 오해의 소지가 큼.",
         trust: 4,
-      },
+      }),
     ],
     c3: [
-      {
+      withUrlPreview({
         id: "e7",
         title: "통계 정의 비교표 (커뮤니티 정리)",
         url: "https://example.com/defs",
         stance: "false",
         summary: "폐기물·양수 포함 여부 등 정의 차이 정리.",
         trust: 5,
-      },
+      }),
     ],
     c4: [
-      {
+      withUrlPreview({
         id: "e8",
         title: "서울시 교통정보시스템 구간 속도",
         url: "https://topis.seoul.go.kr/",
         stance: "true",
         summary: "개통 직후 3개월 평균 속도 하락.",
         trust: 6,
-      },
-      {
+      }),
+      withUrlPreview({
         id: "e9",
         title: "동일 기간 우회도로 속도 상승 데이터",
         url: "https://example.com/detour",
         stance: "neutral",
         summary: "본선 체증이 네트워크 전체 악화를 의미하진 않을 수 있음.",
         trust: 3,
-      },
+      }),
     ],
   },
   comments: {
@@ -192,6 +199,7 @@ export const seedData: AppData = {
   claimScoreHistory: {},
   localUserId: "local_user",
   contentReports: {},
+  notificationPrefs: { ...DEFAULT_NOTIFICATION_PREFS },
 };
 
 export function cloneSeedData(): AppData {
@@ -216,6 +224,9 @@ export function migrateAppData(raw: Partial<AppData> & Record<string, unknown>):
     contentReports:
       (raw.contentReports as AppData["contentReports"]) ?? {},
     pushTokenDev: raw.pushTokenDev as string | undefined,
+    notificationPrefs:
+      (raw.notificationPrefs as AppData["notificationPrefs"]) ??
+      { ...DEFAULT_NOTIFICATION_PREFS },
   };
   for (const t of merged.topics) {
     if (!t.createdAt) {

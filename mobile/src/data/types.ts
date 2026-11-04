@@ -1,3 +1,4 @@
+import type { NotificationPrefs } from "@/config/notifications";
 import type { Stance } from "@/scoring/types";
 
 export interface Topic {
@@ -41,6 +42,10 @@ export interface Evidence {
   archiveUrl?: string;
   archivedAt?: string;
   archiveStatus?: "pending" | "success" | "failed";
+  ogTitle?: string;
+  ogSiteName?: string;
+  ogImageUrl?: string;
+  previewStatus?: "pending" | "success" | "failed";
 }
 
 export interface Comment {
@@ -81,9 +86,10 @@ export interface AppData {
   contentReports: Record<string, string[]>;
   /** Local dev: last Expo push token from registration stub */
   pushTokenDev?: string;
+  notificationPrefs: NotificationPrefs;
 }
 
-export const STORAGE_KEY = "@factfulness/app-data-v3";
+export const STORAGE_KEY = "@factfulness/app-data-v4";
 
 export const NEW_TOPIC_DAYS = 7;
 

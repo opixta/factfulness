@@ -18,6 +18,9 @@ import {
   reportKey,
 } from "@/moderation/reportKeys";
 import { buildWaybackArchiveUrl } from "@/linkArchive/wayback";
+import { simulateLinkPreview } from "@/linkPreview/simulatePreview";
+import type { NotificationPrefs } from "@/config/notifications";
+import { DEFAULT_NOTIFICATION_PREFS } from "@/config/notifications";
 
 export class LocalFactfulnessRepository implements FactfulnessRepository {
   private data: AppData;
@@ -235,6 +238,7 @@ export class LocalFactfulnessRepository implements FactfulnessRepository {
       item.archiveStatus = "success";
       item.archivedAt = now.toISOString();
       item.archiveUrl = buildWaybackArchiveUrl(item.url, now);
+      Object.assign(item, simulateLinkPreview(item.url, item.title));
     }
     if (!this.data.evidence[claimId]) this.data.evidence[claimId] = [];
     this.data.evidence[claimId].unshift(item);
@@ -302,6 +306,15 @@ export class LocalFactfulnessRepository implements FactfulnessRepository {
 
   setPushTokenDev(token: string | null): void {
     this.data.pushTokenDev = token ?? undefined;
+    this.notify();
+  }
+
+  getNotificationPrefs(): NotificationPrefs {
+    return { ...this.data.notificationPrefs };
+  }
+
+  setNotificationPrefs(prefs: NotificationPrefs): void {
+    this.data.notificationPrefs = { ...prefs };
     this.notify();
   }
 

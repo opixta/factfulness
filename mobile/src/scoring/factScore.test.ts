@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { seedData } from "@/data/seed";
+import golden from "../../../fixtures/golden_evidence.json";
 import {
   FACT_THRESHOLD,
   factScore,
@@ -8,14 +8,10 @@ import {
   MIN_ELIGIBLE_SAME_DIR,
   TRUST_MIN,
 } from "@/scoring";
+import type { EvidenceInput } from "@/scoring/types";
 
-function evidenceForClaim(claimId: string) {
-  return (seedData.evidence[claimId] ?? []).map((e) => ({
-    id: e.id,
-    url: e.url,
-    stance: e.stance,
-    trust: e.trust,
-  }));
+function evidenceForClaim(claimId: keyof typeof golden): EvidenceInput[] {
+  return golden[claimId] as EvidenceInput[];
 }
 
 describe("golden fixtures", () => {

@@ -76,6 +76,10 @@ export default function RootLayout() {
           name="onboarding-nickname"
           options={{ title: "닉네임", presentation: "modal" }}
         />
+        <Stack.Screen
+          name="licenses"
+          options={{ title: "오픈소스 고지", headerBackTitle: "뒤로" }}
+        />
       </Stack>
       </UserProfileProvider>
     </FactfulnessProvider>

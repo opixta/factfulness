@@ -180,9 +180,20 @@ export default function ClaimScreen() {
                 </View>
                 <Text style={styles.body}>{e.summary}</Text>
                 {e.url ? (
-                  <Pressable onPress={() => void WebBrowser.openBrowserAsync(e.url)}>
-                    <Text style={styles.link}>{e.url}</Text>
-                  </Pressable>
+                  <>
+                    <Pressable onPress={() => void WebBrowser.openBrowserAsync(e.url)}>
+                      <Text style={styles.link}>{e.url}</Text>
+                    </Pressable>
+                    {e.archiveUrl && e.archiveStatus === "success" ? (
+                      <Pressable
+                        onPress={() => void WebBrowser.openBrowserAsync(e.archiveUrl!)}
+                      >
+                        <Text style={styles.archiveLink}>Wayback 아카이브 ↗</Text>
+                      </Pressable>
+                    ) : e.archiveStatus === "pending" ? (
+                      <Text style={styles.hint}>아카이브 저장 중…</Text>
+                    ) : null}
+                  </>
                 ) : e.fileName ? (
                   <Text style={styles.hint}>첨부 파일: {e.fileName}</Text>
                 ) : null}
@@ -401,6 +412,12 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: Colors.teal,
     marginVertical: Spacing.sm,
+  },
+  archiveLink: {
+    fontFamily: Fonts.uiMedium,
+    fontSize: 12,
+    color: Colors.inkSoft,
+    marginBottom: Spacing.sm,
   },
   trustRow: {
     flexDirection: "row",

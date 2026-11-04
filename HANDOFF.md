@@ -268,17 +268,23 @@ scoring/
 
 ### 2026-11-04 (라운드 5 — 전달·버킷·금지어·관리자)
 
-- **파일 전달**: MVP **presigned download만**; Phase 2에서 clean 파일 **R2 custom domain 공개 CDN** (확정).
-- **R2 버킷**: **quarantine + clean 두 버킷** (단일 버킷 대안 제거).
-- **금지어**: 오픈소스 **[LDNOOBW](https://github.com/LDNOOBW/List-of-Dirty-Naughty-Obscene-and-Otherwise-Bad-Words)** `en`+`ko` (**CC BY 4.0**), `scripts/build-banned-words.mjs`로 `backend/config/banned_words.txt` + 모바일 generated list 동기화. 영어는 **word boundary**, 한국어는 **substring** (오탐은 exclusions + 신고 2차).
-- **Admin**: MVP는 **신고 + `hidden_at`만** — **관리자 화면 없음**; Phase 2에 admin tooling.
+- **파일 전달** / **R2 두 버킷** / **LDNOOBW** 금지어 / Admin MVP scope — [`BACKEND.md`](./BACKEND.md) §7·§11.
+
+### 2026-11-04 (라운드 6 — 신고·검색·알림·아카이브)
+
+- **신고**: 서로 다른 **3명** 신고 시 **`hidden_at` 자동** (기본 `REPORT_AUTO_HIDE_THRESHOLD=3`, tunable). Admin UI 없음 — DB unhide runbook (`BACKEND.md` §11.2).
+- **검색**: MVP **토픽·명제 제목** 검색 — `GET /search?q=` + 모바일 탭 검색 UI.
+- **알림**: 참여 claim의 **판정 상태 변경** 시 Expo push (토큰 테이블 + opt-in stub).
+- **링크 아카이브**: 증거 URL → **Wayback Save Page Now** 비동기 job; `archive_url` / UI 표시.
+- **릴리스**: LDNOOBW **CC BY 4.0** in-app 고지 화면 (`/licenses`).
 
 ## 7. 아직 열린 결정
 
-- R2 custom domain / CDN 세부 (Phase 2)
-- LDNOOBW 외 추가 locale·혐오 표현 소스 여부
-- `hidden_at` 운영 runbook (admin UI 전)
-- (기타) 링크 아카이브, 검색 등 — [`BACKEND.md`](./BACKEND.md) §14
+- R2 custom domain / CDN (Phase 2)
+- LDNOOBW 외 금지어·검색 본문 확장
+- Push **opt-out** 설정 UI
+- OpenGraph 링크 미리보기 (Wayback과 별개)
+- (기타) [`BACKEND.md`](./BACKEND.md) §14
 
 ---
 

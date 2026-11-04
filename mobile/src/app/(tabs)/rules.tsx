@@ -1,6 +1,8 @@
+import { type Href, router } from "expo-router";
 import { ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { Card, Screen } from "@/components/layout";
+import { GhostButton } from "@/components/ui";
 import { StatusBadge } from "@/components/StatusBadge";
 import {
   FACT_THRESHOLD,
@@ -67,6 +69,11 @@ export default function RulesScreen() {
           text={`적격 증거가 False 쪽으로 우세 (임계값 ≥ ${Math.round(FACT_THRESHOLD * 100)}%)`}
         />
         <Legend status="split" text="적격 증거는 있으나 어느 쪽도 65% 미만" />
+
+        <GhostButton
+          label="오픈소스 라이선스 (LDNOOBW)"
+          onPress={() => router.push("/licenses" as Href)}
+        />
       </ScrollView>
     </Screen>
   );

@@ -12,6 +12,7 @@ import { LocalFactfulnessRepository } from "@/repository/LocalRepository";
 import type { FactfulnessRepository } from "@/repository/types";
 import { evidenceInputsFromList } from "@/scoring/evidenceInput";
 import { factScore, opinionScore } from "@/scoring";
+import { registerPushNotificationsStub } from "@/notifications/registerPush";
 
 interface FactfulnessContextValue {
   ready: boolean;
@@ -33,6 +34,9 @@ export function FactfulnessProvider({ children }: { children: React.ReactNode })
     void LocalFactfulnessRepository.create().then((instance) => {
       setRepo(instance);
       unsub = instance.subscribe(refresh);
+      void registerPushNotificationsStub().then((token) => {
+        if (token) instance.setPushTokenDev(token);
+      });
     });
     return () => unsub?.();
   }, [refresh]);

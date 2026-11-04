@@ -45,6 +45,7 @@ class TopicListItem(BaseModel):
 class ClaimSummary(BaseModel):
     id: UUID
     text: str
+    reason: str | None = None
     scores: ClaimScoresDto
 
 
@@ -108,3 +109,39 @@ class EvidenceIn(BaseModel):
 class CommentIn(BaseModel):
     body: str
     vote: str = ""
+
+
+class SearchHitOut(BaseModel):
+    type: str
+    topicId: UUID
+    claimId: UUID | None = None
+    title: str
+    snippet: str | None = None
+
+
+class ContentReportIn(BaseModel):
+    targetType: str
+    targetId: UUID
+    reason: str | None = None
+
+
+class NotificationPrefsOut(BaseModel):
+    notifyVerdictChange: bool
+
+
+class NotificationPrefsIn(BaseModel):
+    notifyVerdictChange: bool
+
+
+class PushTokenIn(BaseModel):
+    expoToken: str
+    platform: str | None = None
+
+
+class UserProfileIn(BaseModel):
+    displayName: str = Field(min_length=2, max_length=20)
+
+
+class UserProfileOut(BaseModel):
+    externalId: str
+    displayName: str

@@ -23,9 +23,11 @@ export default function SettingsScreen() {
             </View>
             <Switch
               value={prefs.notifyVerdictChange}
-              onValueChange={(notifyVerdictChange) =>
-                repo.setNotificationPrefs({ notifyVerdictChange })
-              }
+              onValueChange={(notifyVerdictChange) => {
+                void Promise.resolve(
+                  repo.setNotificationPrefs({ notifyVerdictChange }),
+                );
+              }}
               trackColor={{ true: Colors.teal, false: Colors.line }}
             />
           </View>

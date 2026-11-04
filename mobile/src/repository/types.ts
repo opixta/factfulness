@@ -14,36 +14,38 @@ export interface FactfulnessRepository {
     title: string;
     summary: string;
     firstClaimText: string;
-  }): Topic;
+  }): Topic | Promise<Topic>;
 
   proposeClaim(
     topicId: string,
     input: { text: string; reason?: string },
-  ): Claim | null;
+  ): Claim | null | Promise<Claim | null>;
 
   castVote(claimId: string, value: "true" | "false"): void;
   addTrust(claimId: string, evidenceId: string): void;
   addEvidence(
     claimId: string,
     input: Omit<Evidence, "id" | "trust">,
-  ): Evidence;
+  ): Evidence | Promise<Evidence>;
   addComment(
     claimId: string,
     input: { body: string; vote?: "" | "true" | "false" },
-  ): Comment;
+  ): Comment | Promise<Comment>;
 
   reportContent(input: {
     targetType: "topic" | "claim" | "comment";
     targetId: string;
     claimId?: string;
     reason?: string;
-  }): { distinctReports: number; autoHidden: boolean };
+  }):
+    | { distinctReports: number; autoHidden: boolean }
+    | Promise<{ distinctReports: number; autoHidden: boolean }>;
 
   /** Local dev: store Expo push token from registration stub */
   setPushTokenDev(token: string | null): void;
 
   getNotificationPrefs(): NotificationPrefs;
-  setNotificationPrefs(prefs: NotificationPrefs): void;
+  setNotificationPrefs(prefs: NotificationPrefs): void | Promise<void>;
 
   /** Local / dev: bind actor for participants + comment author */
   setLocalUser(userId: string, nickname: string): void;

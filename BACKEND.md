@@ -975,6 +975,7 @@ HANDOFF §6과 동일. Highlights:
 | `mobile/src/search/titleSearch.ts` | MVP title search (local + server spec) |
 | `mobile/src/config/moderation.ts` | Report auto-hide threshold |
 | `mobile/src/notifications/registerPush.ts` | Expo push permission/token stub |
+| `mobile/src/moderation/trustEligibility.ts` | Trust gating on file `scan_status` |
 | `mobile/src/app/*` | 화면별 repo 호출 |
 | [`HANDOFF.md`](./HANDOFF.md) | 제품·규칙·확정/열린 결정 |
 

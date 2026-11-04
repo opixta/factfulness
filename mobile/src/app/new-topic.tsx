@@ -23,12 +23,13 @@ export default function NewTopicScreen() {
 
   const submit = () => {
     if (!title.trim() || !summary.trim() || !claim.trim()) return;
-    const topic = repo.proposeTopic({
-      title: title.trim(),
-      summary: summary.trim(),
-      firstClaimText: claim.trim(),
-    });
-    router.replace(`/topic/${topic.id}`);
+    void Promise.resolve(
+      repo.proposeTopic({
+        title: title.trim(),
+        summary: summary.trim(),
+        firstClaimText: claim.trim(),
+      }),
+    ).then((topic) => router.replace(`/topic/${topic.id}`));
   };
 
   return (

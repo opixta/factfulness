@@ -68,6 +68,7 @@ def claim_summary(db: Session, claim: Claim, uid: UUID | None) -> ClaimSummary:
     return ClaimSummary(
         id=claim.id,
         text=claim.text,
+        reason=claim.reason,
         scores=scores_dto(db, claim.id, score, uid),
     )
 

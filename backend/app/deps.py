@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from sqlalchemy.orm import Session
@@ -18,18 +18,38 @@ class CurrentUser:
     user: User
 
 
-def _get_or_create_dev_user(db: Session) -> User:
-    user = db.query(User).filter(User.external_id == settings.dev_user_external_id).one_or_none()
+def _get_or_create_user(db: Session, external_id: str, display_name: str) -> User:
+    user = db.query(User).filter(User.external_id == external_id).one_or_none()
     if user:
+        if user.display_name != display_name:
+            user.display_name = display_name
+            db.commit()
+            db.refresh(user)
         return user
-    user = User(
-        external_id=settings.dev_user_external_id,
-        display_name=settings.dev_user_display_name,
-    )
+    user = User(external_id=external_id, display_name=display_name)
     db.add(user)
     db.commit()
     db.refresh(user)
     return user
+
+
+def _get_or_create_dev_user(db: Session) -> User:
+    return _get_or_create_user(
+        db, settings.dev_user_external_id, settings.dev_user_display_name
+    )
+
+
+def _resolve_dev_user(
+    db: Session,
+    dev_user_id: str | None,
+    dev_display_name: str | None,
+) -> User:
+    if dev_user_id and dev_display_name:
+        name = dev_display_name.strip()
+        if not name:
+            return _get_or_create_dev_user(db)
+        return _get_or_create_user(db, dev_user_id.strip(), name)
+    return _get_or_create_dev_user(db)
 
 
 def _user_from_supabase_token(db: Session, token: str) -> User:
@@ -60,9 +80,11 @@ def _user_from_supabase_token(db: Session, token: str) -> User:
 def get_current_user(
     db: Annotated[Session, Depends(get_db)],
     creds: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
+    dev_user_id: Annotated[str | None, Header(alias="X-Dev-User-External-Id")] = None,
+    dev_display_name: Annotated[str | None, Header(alias="X-Dev-Display-Name")] = None,
 ) -> CurrentUser:
     if settings.auth_mode == "dev":
-        return CurrentUser(user=_get_or_create_dev_user(db))
+        return CurrentUser(user=_resolve_dev_user(db, dev_user_id, dev_display_name))
     if not creds:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Authorization required")
     user = _user_from_supabase_token(db, creds.credentials)
@@ -72,9 +94,13 @@ def get_current_user(
 def get_optional_user(
     db: Annotated[Session, Depends(get_db)],
     creds: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
+    dev_user_id: Annotated[str | None, Header(alias="X-Dev-User-External-Id")] = None,
+    dev_display_name: Annotated[str | None, Header(alias="X-Dev-Display-Name")] = None,
 ) -> CurrentUser | None:
     if settings.auth_mode == "dev":
-        return CurrentUser(user=_get_or_create_dev_user(db))
+        if dev_user_id and dev_display_name:
+            return CurrentUser(user=_resolve_dev_user(db, dev_user_id, dev_display_name))
+        return None
     if not creds:
         return None
     try:

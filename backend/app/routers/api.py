@@ -10,14 +10,20 @@ from app.models import Claim, Comment, Evidence, EvidenceTrust, Topic, Vote
 from app.schemas.dto import (
     ClaimDetailOut,
     CommentIn,
+    ContentReportIn,
     EvidenceIn,
     ProposeClaimIn,
     ProposeTopicIn,
+    SearchHitOut,
     TopicDetailOut,
     TopicListItem,
     VoteIn,
 )
+from app.services.bootstrap import build_bootstrap
+from app.services.link_enrichment import build_wayback_archive_url, site_name_from_url
 from app.services.recompute import recompute_claim, touch_topic_activity
+from app.services.reports import report_content
+from app.services.search_query import normalize_search_query
 from app.services.serialize import claim_detail, claim_summary, topic_detail, topic_list_item
 
 router = APIRouter()
@@ -154,16 +160,11 @@ def add_evidence(
         summary=body.summary,
         preview_status="success" if body.url else None,
         og_title=body.title if body.url else None,
-        archive_status="pending" if body.url else None,
     )
     if body.url:
-        try:
-            from urllib.parse import urlparse
-
-            host = urlparse(body.url).hostname or ""
-            row.og_site_name = host.replace("www.", "")
-        except Exception:
-            pass
+        row.og_site_name = site_name_from_url(body.url)
+        row.archive_url = build_wayback_archive_url(body.url)
+        row.archive_status = "success"
     db.add(row)
     db.flush()
     score = recompute_claim(db, claim_id)
@@ -243,3 +244,82 @@ def add_trust(
         "evidence": evidence_dto(db, row),
         "scores": claim_summary(db, claim, auth.user.id).scores,
     }
+
+
+@router.get("/bootstrap")
+def bootstrap(
+    db: Session = Depends(get_db),
+    optional: CurrentUser | None = Depends(get_optional_user),
+) -> dict:
+    uid = optional.user.id if optional else None
+    payload = build_bootstrap(db, uid)
+    prefs = {"notifyVerdictChange": True}
+    if optional:
+        prefs = {"notifyVerdictChange": optional.user.notify_verdict_change}
+    payload["notificationPrefs"] = prefs
+    return payload
+
+
+@router.get("/search")
+def search(
+    q: str = "",
+    limit: int = 30,
+    db: Session = Depends(get_db),
+) -> dict:
+    if limit < 1 or limit > 50:
+        limit = 30
+    normalized = normalize_search_query(q)
+    if not normalized:
+        return {"hits": []}
+    hits: list[SearchHitOut] = []
+    seen_claims: set[uuid.UUID] = set()
+
+    topics = db.query(Topic).filter(Topic.hidden_at.is_(None)).all()
+    for topic in topics:
+        if normalized in normalize_search_query(topic.title):
+            hits.append(
+                SearchHitOut(type="topic", topicId=topic.id, title=topic.title, snippet=None)
+            )
+        claims = (
+            db.query(Claim)
+            .filter(Claim.topic_id == topic.id, Claim.hidden_at.is_(None))
+            .all()
+        )
+        for claim in claims:
+            if claim.id in seen_claims:
+                continue
+            if normalized in normalize_search_query(claim.text):
+                seen_claims.add(claim.id)
+                hits.append(
+                    SearchHitOut(
+                        type="claim",
+                        topicId=topic.id,
+                        claimId=claim.id,
+                        title=claim.text,
+                    )
+                )
+            if len(hits) >= limit:
+                break
+        if len(hits) >= limit:
+            break
+
+    return {"hits": [h.model_dump(mode="json") for h in hits[:limit]]}
+
+
+@router.post("/content/report")
+def content_report(
+    body: ContentReportIn,
+    db: Session = Depends(get_db),
+    auth: CurrentUser = Depends(get_current_user),
+) -> dict:
+    if body.targetType not in ("topic", "claim", "comment"):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid targetType")
+    distinct, hidden = report_content(
+        db,
+        reporter_id=auth.user.id,
+        target_type=body.targetType,
+        target_id=body.targetId,
+        reason=body.reason,
+    )
+    db.commit()
+    return {"distinctReports": distinct, "hidden": hidden}

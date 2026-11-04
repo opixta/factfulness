@@ -23,8 +23,9 @@ export default function NewClaimScreen() {
   const [reason, setReason] = useState("");
 
   const submit = () => {
-    const claim = repo.proposeClaim(topicId, { text, reason });
-    if (claim) router.back();
+    void Promise.resolve(repo.proposeClaim(topicId, { text, reason })).then((claim) => {
+      if (claim) router.back();
+    });
   };
 
   return (

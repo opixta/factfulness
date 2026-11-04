@@ -39,6 +39,34 @@ docker compose --profile api up --build
 
 Public reads (`GET /v1/topics`, claims) work without auth in both modes.
 
+### Mobile app (Expo) + local API
+
+1. Start API bound to all interfaces (required for emulators and LAN devices):
+
+   ```bash
+   uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+   ```
+
+2. Copy `mobile/.env.example` → `mobile/.env` and set `EXPO_PUBLIC_API_URL`:
+
+   | Client | Typical base URL |
+   |--------|------------------|
+   | Android emulator | `http://10.0.2.2:8000` |
+   | iOS simulator | `http://127.0.0.1:8000` |
+   | Physical phone (same Wi‑Fi) | `http://<PC-LAN-IP>:8000` |
+
+3. Restart Expo after changing env (`npx expo start`).
+
+**Dev auth:** with `AUTH_MODE=dev`, the app sends `X-Dev-User-External-Id` and `X-Dev-Display-Name` (from the nickname profile) on mutating requests. Without those headers, reads still work but `userVote` is omitted until profile is set.
+
+#### Windows + WSL2 (Ubuntu) notes
+
+- Run Postgres + uvicorn **inside WSL**; use the WSL IP from Windows (`hostname -I` in Ubuntu) when testing from a **physical device** on the LAN, or use **mirrored networking** / port forwarding so `localhost:8000` on Windows reaches WSL.
+- Bind uvicorn to `0.0.0.0`, not `127.0.0.1`, so the emulator bridge (`10.0.2.2`) and forwarded ports work.
+- Optional: `netsh interface portproxy add v4tov4 listenport=8000 listenaddress=0.0.0.0 connectport=8000 connectaddress=<WSL-IP>` (Admin PowerShell) then point the phone at the Windows PC IP.
+
+**API mode limitations (still local-only in the app):** file evidence upload (R2/ClamAV), claim score history bulk export, and offline AsyncStorage app-data cache — see `mobile/README.md`.
+
 ## Tests
 
 Golden scoring (no DB):
@@ -72,4 +100,4 @@ cd backend && python scripts/seed_from_json.py
 
 ## Out of scope for Phase 0
 
-R2 uploads, ClamAV, staging deploy, and mobile `ApiRepository` wiring are Phase 1+ per `BACKEND.md` §12.
+R2 uploads, ClamAV, and staging deploy remain Phase 1+ per `BACKEND.md` §12. Mobile can use `EXPO_PUBLIC_API_URL` to talk to this API (see above).

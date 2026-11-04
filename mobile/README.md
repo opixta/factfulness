@@ -25,6 +25,31 @@ In the output, you'll find options to open the app in a
 
 You can start developing by editing the files inside the **src/app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
 
+## Backend API mode (optional)
+
+By default the app uses **offline local storage** with seed data (`LocalFactfulnessRepository`). To use the FastAPI backend:
+
+1. Start Postgres + API — see [`../backend/README.md`](../backend/README.md) (`uvicorn --host 0.0.0.0 --port 8000`).
+2. Copy `.env.example` → `.env` and set `EXPO_PUBLIC_API_URL` (restart Expo after changes).
+3. Complete nickname onboarding — dev auth headers identify your user to the API.
+
+| Where you run the app | `EXPO_PUBLIC_API_URL` |
+|-----------------------|------------------------|
+| Android emulator | `http://10.0.2.2:8000` |
+| iOS simulator | `http://127.0.0.1:8000` |
+| Physical device | `http://<your-PC-LAN-IP>:8000` |
+
+**WSL2:** run the backend in Ubuntu, bind `0.0.0.0`, and use WSL/Windows port forwarding or mirrored networking so the emulator or phone can reach port 8000 (details in `backend/README.md`).
+
+**Still local-only when `EXPO_PUBLIC_API_URL` is set:**
+
+- File/image/PDF evidence uploads (needs Phase 1 R2 + scan pipeline)
+- Persisting the full app blob to AsyncStorage (API reloads from `/v1/bootstrap`)
+- `claimScoreHistory` / local report ledger mirrors
+- Actual push delivery (token is stored via API stub only)
+
+Failed network/API calls show a **retry** banner; there is no offline mutation queue.
+
 ## Get a fresh project
 
 When you're ready, run:

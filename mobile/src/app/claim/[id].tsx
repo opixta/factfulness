@@ -72,23 +72,32 @@ export default function ClaimScreen() {
     const hasUrl = Boolean(evUrl.trim());
     const hasFile = Boolean(evFileUri && evFileName);
     if (!evTitle.trim() || !evSummary.trim() || (!hasUrl && !hasFile)) return;
-    repo.addEvidence(id, {
-      title: evTitle.trim(),
-      url: hasUrl ? evUrl.trim() : "",
-      stance: evStance,
-      summary: evSummary.trim(),
-      fileName: evFileName,
-      fileMime: evFileMime,
-      localFileUri: evFileUri,
-    });
-    setEvTitle("");
-    setEvUrl("");
-    setEvSummary("");
-    setEvStance("true");
-    setEvFileName(undefined);
-    setEvFileMime(undefined);
-    setEvFileUri(undefined);
-    setEvFileError(null);
+    void Promise.resolve(
+      repo.addEvidence(id, {
+        title: evTitle.trim(),
+        url: hasUrl ? evUrl.trim() : "",
+        stance: evStance,
+        summary: evSummary.trim(),
+        fileName: evFileName,
+        fileMime: evFileMime,
+        localFileUri: evFileUri,
+      }),
+    )
+      .then(() => {
+        setEvTitle("");
+        setEvUrl("");
+        setEvSummary("");
+        setEvStance("true");
+        setEvFileName(undefined);
+        setEvFileMime(undefined);
+        setEvFileUri(undefined);
+        setEvFileError(null);
+      })
+      .catch((err: unknown) => {
+        if (err instanceof Error && err.message === "FILE_EVIDENCE_REQUIRES_R2") {
+          setEvFileError("파일 증거는 API 모드에서 아직 지원되지 않습니다 (Phase 1 R2).");
+        }
+      });
   };
 
   const pickEvidenceFile = async () => {
@@ -120,9 +129,12 @@ export default function ClaimScreen() {
 
   const submitComment = () => {
     if (!commentBody.trim() || !isCommentAllowed(commentBody)) return;
-    repo.addComment(id, { body: commentBody.trim(), vote: commentVote });
-    setCommentBody("");
-    setCommentVote("");
+    void Promise.resolve(
+      repo.addComment(id, { body: commentBody.trim(), vote: commentVote }),
+    ).then(() => {
+      setCommentBody("");
+      setCommentVote("");
+    });
   };
 
   return (

@@ -49,19 +49,19 @@
 
 ---
 
-## 3. 점수 규칙 (현재 초안 — 서버로 옮길 때 동일하게)
+## 3. 점수 규칙 (확정 — 서버·모바일 동기화)
 
 **SSOT (모바일)**: `mobile/src/scoring/` — 프레임워크 무관 순수 TypeScript.  
-**참조 구현 (웹)**: `web-prototype/app.js`
+**참조 구현 (웹, 구 규칙)**: `web-prototype/app.js` (갱신 전)
 
-### 상수
+### 상수 (확정)
 
 | 이름 | 값 | 의미 |
 |------|-----|------|
 | `TRUST_MIN` | `3` | 증거가 “적격”이 되려면 신뢰 추천 ≥ 3 (C2) |
-| `MIN_ELIGIBLE_SAME_DIR` | `2` | 확정하려는 방향의 적격 증거 ≥ 2건 (C3) |
+| `MIN_ELIGIBLE_SAME_DIR` | `2` | 확정 방향마다 **서로 다른 출처 도메인** ≥ 2 (C3) |
 | `FACT_THRESHOLD` | `0.65` | Fact/Lie 확정에 필요한 적격 가중치 비중 ≥ 65% |
-| `RULE_VERSION` | `2026-03-24-draft` | 규칙/상수 변경 시 bump (백엔드 `claim_scores.rule_version`과 동기화 예정) |
+| `RULE_VERSION` | `2026-11-04-decisions` | 도메인 C3·중립 제외·제품 결정 반영 |
 
 ### 여론 점수 (Opinion)
 
@@ -70,27 +70,31 @@ Opinion True% = votesTrue / (votesTrue + votesFalse)
 ```
 
 - 출처 유무 무관
-- 댓글에 연동된 투표도 여론에 포함 가능
+- **댓글 연동 투표** = 해당 유저의 claim **1표** 생성/변경 (`castVote`와 동일)
 - 팩트 점수에는 **직접 반영하지 않음**
 
 ### 팩트 점수 — 적격 증거 (C1, C2)
 
-증거가 **적격(eligible)** 이려면:
+증거가 **적격(eligible)** 이려면 **동시에**:
 
 - **C1**: 출처 URL(또는 향후 업로드 파일) 존재
-- **C2**: `trust >= TRUST_MIN` (기본 3)
-
-`stance === "neutral"` 인 자료는 적격 후보에는 포함될 수 있으나, True/False **가중치 합산에서는 제외**.
+- **C2**: `trust >= TRUST_MIN` (3)
+- **stance**가 `true` 또는 `false` (**`neutral`은 적격·가중치 모두 제외**)
 
 ### 팩트 점수 — 확정 게이트 (C3, C4, threshold)
 
-1. 적격 증거를 True / False로 분류
-2. **C3**: True 쪽 적격 ≥ 2 **또는** False 쪽 적격 ≥ 2 (확정하려는 쪽이 이 조건을 만족해야 함)
-3. 가중치: 각 적격 증거의 `trust` 합  
+1. 적격 증거를 True / False로 분류 (중립 제외)
+2. **C3**: 확정하려는 방향에서 **서로 다른 출처 도메인** ≥ 2  
+   - URL `hostname` 기준 (`www.` 제거, 소문자)  
+   - 같은 도메인의 증거 2건 → C3 카운트 **1**
+3. **가중치**: 방향·도메인별로 해당 증거들의 `trust`를 **합산**한 뒤, 도메인 버킷들을 다시 합산  
    - `wTrue`, `wFalse`  
-   - `trueShare = wTrue / (wTrue + wFalse)`
-4. **C4**: 이기려는 쪽 가중치가 반대보다 작으면 안 됨 (`wTrue >= wFalse` 또는 반대)
+   - `trueShare = wTrue / (wTrue + wFalse)`  
+   - (같은 도메인 다건은 C3에는 1개로 세지만, 가중치는 합쳐져 반영)
+4. **C4**: 이기려는 쪽 가중치가 반대보다 작으면 안 됨
 5. 이긴 쪽 비중 ≥ `FACT_THRESHOLD` (0.65)
+
+**확정 후 변경**: Fact/Lie 확정 후에도 새 증거·trust가 들어오면 **항상 재계산**하며 판정은 바뀔 수 있다.
 
 ### 판정 상태
 
@@ -105,9 +109,9 @@ Opinion True% = votesTrue / (votesTrue + votesFalse)
 
 ### 샘플로 이미 검증되는 케이스 (시드 데이터)
 
-- **c1** (발전량 비중 OECD 평균보다 높다): 여론은 갈리지만 적격 False 2건 → **Lie**
-- **c2** (설비용량 비중): 적격 True 우세 → **Fact**
-- **c3** (정의 동일): 여론은 False 많아도 적격 부족 → **검증 중**
+- **c1** … 적격 False **도메인 2개** → **Lie**
+- **c2** … 적격 True **도메인 2개** → **Fact**
+- **c3** … 적격 False **도메인 1개** → **검증 중** (시드 URL은 서로 다른 도메인 유지)
 
 유닛 테스트: `cd mobile && npm test` (`mobile/src/scoring/factScore.test.ts`)
 
@@ -170,7 +174,7 @@ npx expo start          # QR / 시뮬레이터 / w 키로 웹
 |----|------|
 | API | **FastAPI (Python)** — `mobile/src/scoring` 로직을 Python으로 미러 또는 공유 패키지화 |
 | DB | **PostgreSQL** |
-| Auth | Clerk / Supabase Auth / Auth.js (직접 구현 비권장) |
+| Auth | **Supabase Auth** (확정) — Expo `@supabase/supabase-js`, FastAPI JWT 검증 |
 | 파일 | 1단계는 URL만, 이후 S3/R2 |
 | 배포 | Railway / Fly.io / Render + Managed Postgres |
 
@@ -226,20 +230,28 @@ scoring/
 
 ---
 
-## 6. 제품/규칙에서 열린 결정 (아직 미정)
+## 6. 확정된 제품·규칙 결정 (2026-11-04)
 
-에이전트가 임의로 굳히지 말고, 구현 시 기본값을 쓰되 문서/설정으로 노출할 것.
+- **임계값**: `TRUST_MIN=3`, `MIN_ELIGIBLE_SAME_DIR=2`, `FACT_THRESHOLD=0.65` 유지
+- **C3 출처**: 동일 방향 적격 증거는 **서로 다른 URL 도메인** 기준 2개 이상; 가중치는 **도메인별 trust 합** 후 방향 합산
+- **중립 증거**: 팩트 점수 **적격·가중치 모두 제외**
+- **재오픈**: Fact/Lie 확정 후에도 증거/trust 변경 시 **자동 재계산** (판정 변경 가능)
+- **공개**: 토픽·claim 제안 **즉시 published**; 신고 → 숨김(report→hide) 모더레이션 훅
+- **인증**: **투표·trust는 로그인 필수**; **읽기는 비로그인 허용** (목록/상세 GET public)
+- **Auth**: **Supabase Auth**
+- **댓글 투표**: claim당 유저 **1표** — 댓글 `linked_vote`는 `votes` UPSERT와 동일
 
-- 신뢰 추천 3, 동일 방향 2건, 65%가 너무 빡센가/느슨한가
-- “서로 다른 출처”를 URL 도메인 단위로 강제할지
-- 중립 증거를 적격 카운트에 넣을지
-- Fact/Lie 확정 후 새 증거가 들어오면 자동 재오픈할지
-- 토픽/명제 제안이 즉시 공개인지, 모더레이션 큐인지
-- 익명 투표 허용 여부 (요건 검증 단계에선 로그인 강제 권장)
+## 7. 아직 열린 결정
+
+- `participants` 집계 정의 (로컬: `proposeClaim` 시 +1)
+- 토픽 `updated_at` 갱신 트리거 (어떤 write에 반영할지)
+- 확정 이력: `claim_scores` 스냅샷/history 테이블 보존 여부
+- 파일 업로드 MIME·용량·바이러스 스캔
+- 댓글 markdown, CAPTCHA, rate limit 수치
 
 ---
 
-## 7. 권장 다음 작업 순서
+## 8. 권장 다음 작업 순서
 
 1. **Backend 스캐폴딩**: FastAPI + Postgres + `schema.sql` + scoring 모듈 + golden tests (`mobile/src/scoring`과 동일 fixture)
 2. **시드 데이터**: `mobile/src/data/seed.ts` → SQL/JSON 이전
@@ -250,7 +262,7 @@ scoring/
 
 ---
 
-## 8. 디자인/프론트 메모
+## 9. 디자인/프론트 메모
 
 - 브랜드명: **Factfulness**
 - 폰트: Fraunces (display) + Outfit (UI) — `@expo-google-fonts/*`
@@ -259,7 +271,7 @@ scoring/
 
 ---
 
-## 9. 커밋 시점 파일 목록 (기준선)
+## 10. 커밋 시점 파일 목록 (기준선)
 
 ```
 mobile/                 # Expo app (primary product)

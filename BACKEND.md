@@ -1,10 +1,10 @@
 # Factfulness — Backend 구현 가이드
 
 모바일 앱(`mobile/`)이 **로컬 저장소(`LocalFactfulnessRepository`)** 대신 **원격 API**를 사용할 수 있도록 필요한 백엔드 작업을 정리한 문서입니다.  
-점수 규칙·열린 제품 결정의 요약은 [`HANDOFF.md`](./HANDOFF.md)를 따르고, 여기서는 **실제 앱 코드**(`data/types`, `repository/*`, `scoring/*`, 화면 흐름)에 맞춘 **구체적인 구현 체크리스트**를 다룹니다.
+점수 규칙·**확정된** 제품 결정은 [`HANDOFF.md`](./HANDOFF.md) §3·§6을 따르고, 여기서는 **실제 앱 코드**(`data/types`, `repository/*`, `scoring/*`, 화면 흐름)에 맞춘 **구체적인 구현 체크리스트**를 다룹니다.
 
 - **Repo**: `https://github.com/opixta/factfulness.git`
-- **모바일 SSOT (점수 참조)**: `mobile/src/scoring/` (`RULE_VERSION`: `2026-03-24-draft`)
+- **모바일 SSOT (점수 참조)**: `mobile/src/scoring/` (`RULE_VERSION`: `2026-11-04-decisions`)
 - **시드 데이터**: `mobile/src/data/seed.ts`
 
 ---
@@ -20,10 +20,11 @@
 
 **현재 앱에서 서버로 옮겨야 하는 것**
 
-- `votesTrue` / `votesFalse` 집계 (투표 버튼 + **댓글 연동 투표** — `LocalRepository.addComment` 참고)
+- `votesTrue` / `votesFalse` 집계 (`castVote` + 댓글 `linked_vote`는 **동일 1표 UPSERT** — `LocalRepository.addComment` → `castVote`)
 - `evidence.trust` 집계 (`addTrust`)
-- `factScore()` 결과 전부 (`status`, `factPct`, `wTrue`, `wFalse`, `eligible*`, `reasons`, `gatePassed`)
-- `Claim.userVote` — 로그인 유저 기준 **서버가 1표 상태** 반환
+- `eligibleTrue` / `eligibleFalse` — UI에 표시되는 값은 **서로 다른 출처 도메인 수** (C3)
+- `factScore()` 결과 전부 (`status`, `factPct`, `wTrue`, `wFalse`, `eligible*`, `reasons`, `gatePassed`, `ruleVersion`)
+- `Claim.userVote` — 로그인 유저의 `votes` row 반환
 
 **현재 앱에서 클라이언트에 남아도 되는 것 (초기)**
 
@@ -41,11 +42,11 @@
 | API | **FastAPI (Python 3.12+)** | OpenAPI 스키마, Pydantic v2, `uvicorn` |
 | DB | **PostgreSQL 16+** | JSONB(`gate_reasons`), UUID PK |
 | 마이그레이션 | **Alembic** | `backend/alembic/` |
-| Auth | **Clerk / Supabase Auth / Auth.js** 중 택1 | JWT 검증 미들웨어, `users` 테이블 매핑 |
+| Auth | **Supabase Auth** (확정) | JWT(`Authorization: Bearer`), `users.supabase_sub` 매핑 — §6 |
 | 객체 저장 (2단계) | **S3 / R2** | presigned upload |
 | 배포 | Railway / Fly.io / Render + Managed Postgres | staging + production |
 
-> **미결정**: Auth 벤더 — 아래 §7 참고. 문서만으로 벤더를 고정하지 않음.
+**확정 (HANDOFF §6 요약)**: 임계값 유지 · C3 도메인 distinct · 중립 제외 · 확정 후 재계산 · 즉시 공개+신고 숨김 · 읽기 public / 쓰기 로그인 · Supabase · 댓글 vote=1표.
 
 ### 2.2 레포 디렉터리 (제안)
 
@@ -70,7 +71,7 @@ backend/
     scoring/                # SSOT — mobile/src/scoring 미러
       config.py             # TRUST_MIN, FACT_THRESHOLD, RULE_VERSION
       eligibility.py
-      aggregate.py            # factScore equivalent
+      domain.py             # source_domain, distinct counts, domain weight buckets
       types.py
   tests/
     test_scoring_golden.py  # c1/c2/c3 fixtures
@@ -130,7 +131,8 @@ CREATE TABLE topics (
   summary            TEXT NOT NULL,
   tags               TEXT[] NOT NULL DEFAULT '{}',
   created_by         UUID REFERENCES users(id),
-  status             TEXT NOT NULL DEFAULT 'published',  -- moderation: 미결정
+  status             TEXT NOT NULL DEFAULT 'published',  -- 즉시 공개; hidden은 moderation
+  hidden_at          TIMESTAMPTZ,
   participant_count  INT NOT NULL DEFAULT 0,
   created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -182,6 +184,17 @@ CREATE TABLE comments (
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE content_reports (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  target_type  TEXT NOT NULL,  -- topic|claim|evidence|comment
+  target_id    UUID NOT NULL,
+  reporter_id  UUID NOT NULL REFERENCES users(id),
+  reason       TEXT,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  resolved_at  TIMESTAMPTZ,
+  action       TEXT              -- hide|dismiss — MVP: hide hook
+);
+
 CREATE TABLE claim_scores (
   claim_id         UUID PRIMARY KEY REFERENCES claims(id) ON DELETE CASCADE,
   opinion_pct      INT NOT NULL,           -- mobile opinionScore.pct
@@ -211,9 +224,9 @@ CREATE TABLE claim_scores (
 | 동작 | `LocalRepository` 동작 | 서버 구현 시 |
 |------|-------------------------|--------------|
 | `castVote` | 이전 표 취소 후 새 표 반영 | `votes` UPSERT; opinion 재집계 |
-| `addComment` + `vote` | **추가** 투표만 (+1), `userVote` 없음 | **미결정**: 댓글 연동 투표를 `votes`와 별도 opinion 이벤트로 셀지, 1표 제한 예외로 셀지 (HANDOFF §6) |
-| `addTrust` | 무제한 +1 | **유저당 evidence 1 trust** (UNIQUE PK) |
-| `proposeTopic` | topic + 첫 claim + 빈 evidence/comments | 단일 트랜잭션 |
+| `addComment` + `vote` | `castVote`와 동일 (1인 1표 UPSERT) | `comments` insert + `linked_vote` 있으면 `votes` UPSERT; opinion 재집계 |
+| `addTrust` | 무제한 +1 (로컬) | **로그인 필수**; 유저당 evidence 1 trust (UNIQUE PK) |
+| `proposeTopic` / `proposeClaim` | 즉시 목록 반영 | `status=published`로 insert; 신고 시 hide |
 | 홈 settled 수 | 클라이언트 `factScore()` | topic list API에 claim별 `fact_status` 포함 |
 
 ---
@@ -221,7 +234,8 @@ CREATE TABLE claim_scores (
 ## 4. REST API: Repository · 화면 ↔ 엔드포인트
 
 Base URL 예: `https://api.factfulness.example/v1`  
-인증: `Authorization: Bearer <JWT>` (읽기 전용 public topic은 **미결정** — MVP는 전 API 로그인 권장)
+**읽기**: `GET /topics`, `GET /topics/{id}`, `GET /claims/{id}` — **인증 불필요** (hidden 콘텐츠 제외).  
+**쓰기** (투표·trust·제안·댓글·증거): `Authorization: Bearer <Supabase access JWT>` **필수**.
 
 ### 4.1 공통 DTO (응답)
 
@@ -254,7 +268,7 @@ interface EvidenceDto {
   stance: "true" | "false" | "neutral";
   summary: string;
   trust: number;
-  eligible: boolean;       // C1+C2; mobile isEvidenceEligible
+  eligible: boolean;       // C1+C2+non-neutral; mobile isEvidenceEligible
   userHasTrusted?: boolean;
 }
 
@@ -308,7 +322,7 @@ interface CommentDto {
 | `castVote` | `claim/[id]` True/False | `PUT /claims/{claimId}/vote` | `{ value: "true" \| "false" }` | `{ scores: ClaimScoresDto }` |
 | `addEvidence` | claim form | `POST /claims/{claimId}/evidence` | `{ title, url, stance, summary }` | `{ evidence: EvidenceDto, scores }` |
 | `addTrust` | claim 추천 +1 | `POST /evidence/{evidenceId}/trust` | `{}` | `{ evidence: EvidenceDto, scores }` — 409 if already trusted |
-| `addComment` | claim 댓글 | `POST /claims/{claimId}/comments` | `{ body, vote?: "" \| "true" \| "false" }` | `{ comment, scores? }` — vote 연동 시 opinion 재집계 |
+| `addComment` | claim 댓글 | `POST /claims/{claimId}/comments` | `{ body, vote?: "" \| "true" \| "false" }` | `{ comment, scores }` — `vote` set 시 **동일** `PUT /vote` 처리 |
 
 **Validation (서버)**
 
@@ -334,7 +348,7 @@ Optional `GET /config/scoring`:
   "trustMin": 3,
   "minEligibleSameDir": 2,
   "factThreshold": 0.65,
-  "ruleVersion": "2026-03-24-draft"
+  "ruleVersion": "2026-11-04-decisions"
 }
 ```
 
@@ -349,9 +363,15 @@ Optional `GET /config/scoring`:
 | `config.py` | 동일 상수 + `RULE_VERSION` |
 | `eligibility.ts` | `is_evidence_eligible`, `filter_eligible` |
 | `opinion.ts` | `opinion_score(votes_true, votes_false)` |
+| `domain.ts` | `source_domain`, `distinct_domain_count`, `aggregate_domain_weights` |
 | `factScore.ts` | `fact_score(evidence: list[EvidenceInput])` |
 
-입력 `EvidenceInput`: `{ url, stance, trust }` — 서버는 DB에서 trust = `COUNT(evidence_trust)` (+ base 0).
+**규칙 (확정)**:
+
+- `neutral`: 적격·가중치 **제외** (`eligibility.ts`와 동일)
+- **C3**: `eligibleTrue`/`eligibleFalse` DTO = 방향별 **distinct domain count**
+- **가중치**: 같은 도메인 내 여러 증거의 `trust` **합산** 후 방향별 합 (`aggregate_domain_weights`)
+- 상수: `TRUST_MIN=3`, `MIN_ELIGIBLE_SAME_DIR=2`, `FACT_THRESHOLD=0.65`
 
 ### 5.2 `rule_version` 및 재계산
 
@@ -360,19 +380,19 @@ Optional `GET /config/scoring`:
 | 이벤트 | recompute |
 |--------|-----------|
 | vote upsert | opinion + fact |
-| comment + linked_vote | opinion (+ fact unchanged) |
+| comment + linked_vote | `votes` UPSERT + opinion (+ fact unchanged) |
 | evidence create | fact |
 | trust create | fact |
 | evidence delete (미래) | fact |
 
 **`recompute_claim(claim_id)` 알고리즘**
 
-1. Load votes → `votes_true`, `votes_false` (댓글 연동 투표 포함 방식은 **§3.3 미결정** 반영)
-2. Load evidence + trust counts
+1. Load votes → `votes_true`, `votes_false` (**댓글 linked_vote는 votes row로만** 반영 — 별도 +1 없음)
+2. Load evidence + trust counts (non-neutral only for fact)
 3. `fact = fact_score(...)` → `claim_scores` upsert with `rule_version=RULE_VERSION`
 4. Return DTO
 
-**확정 후 새 증거** → status 재오픈 여부: **미결정** (HANDOFF §6). MVP는 **항상 재계산** (과거 `rule_version`은 row history로 보존할지 **미결정**).
+**확정 후 새 증거/trust**: **항상 재계산** — `fact_status`는 `pending|fact|lie|split`로 **덮어쓰기** (판정 변경 가능). 스냅샷 history 테이블은 **미결정** (HANDOFF §7).
 
 ### 5.3 Golden tests (c1 / c2 / c3)
 
@@ -397,25 +417,40 @@ Optional `GET /config/scoring`:
 | evidence당 1 trust | `evidence_trust` PK | `409 Conflict` |
 | write 시 로그인 | JWT middleware | `401` |
 
-### 6.2 모바일 Auth 흐름 (구현 함의)
+### 6.2 Supabase Auth — 모바일
 
 **작업 항목 (앱)**
 
-- [ ] `expo-auth-session` 또는 벤더 SDK (Clerk Expo / Supabase)로 로그인 화면 추가
-- [ ] Secure token storage (`expo-secure-store`)
-- [ ] `FactfulnessProvider`에서 `ApiFactfulnessRepository` 생성 시 token 주입
-- [ ] 401 → 로그인 modal; token refresh
+- [ ] `@supabase/supabase-js` + `expo-secure-store` (session persist)
+- [ ] 로그인 UI (magic link / OAuth — Supabase dashboard 설정 따름)
+- [ ] `castVote`, `addTrust`, `addEvidence`, `addComment`(write), `proposeTopic`, `proposeClaim` 호출 전 session 확인; 없으면 로그인 유도
+- [ ] `ApiFactfulnessRepository`: `Authorization: Bearer ${session.access_token}`
 
-**작업 항목 (서버)**
+**작업 항목 (서버 — FastAPI)**
 
-- [ ] JWT 검증 + `users` upsert on first request (`display_name` from profile **미결정**)
-- [ ] 모든 `POST/PUT`에 `created_by` / `user_id` 기록
+- [ ] Env: `SUPABASE_URL`, `SUPABASE_JWT_SECRET` (또는 JWKS: `{SUPABASE_URL}/auth/v1/.well-known/jwks.json`)
+- [ ] `python-jose` / PyJWT로 JWT 검증: `aud`=`authenticated`, `iss`=`{SUPABASE_URL}/auth/v1`, `sub` → `users.external_id`
+- [ ] Dependency `get_current_user`: Bearer 필수 (write); `get_optional_user` (public GET)
+- [ ] 첫 write 시 `users` row upsert (`display_name` from `user_metadata` — **미결정** 필드명)
 
-### 6.3 댓글·투표 정책 (미결정 — 반드시 제품 결정 후 구현)
+```python
+# 개념 스케치 — HS256 프로젝트 secret 사용 시
+from jose import jwt
 
-- [ ] 댓글 `linked_vote`가 **별도 opinion 표**인지 `votes` 테이블과 **동일 1표**인지
-- [ ] 익명 읽기/쓰기 허용 여부
-- [ ] 토픽/claim **즉시 공개 vs moderation queue** (`topics.status`)
+def verify_supabase_token(token: str, secret: str, project_url: str) -> dict:
+    return jwt.decode(
+        token,
+        secret,
+        algorithms=["HS256"],
+        audience="authenticated",
+        issuer=f"{project_url}/auth/v1",
+    )
+```
+
+### 6.3 댓글·투표 (확정)
+
+- [x] claim당 유저 **1표** — `POST /comments` with `vote` executes same UPSERT as `PUT /claims/{id}/vote`
+- [x] 투표·trust **로그인 필수**; topic/claim **읽기 public**
 
 ---
 
@@ -429,7 +464,8 @@ Optional `GET /config/scoring`:
 
 - [ ] URL normalize (strip, scheme allowlist)
 - [ ] C1: `url IS NOT NULL AND url != ''`
-- [ ] (선택) domain extract for future “서로 다른 출처” C3 강화 — **미결정**
+- [ ] C1: `url` required (1단계); `neutral` never eligible
+- [ ] `source_domain(url)` — scoring과 동일 로직 Python 포팅
 
 ### 7.2 2단계 (파일)
 
@@ -531,7 +567,7 @@ RATE_LIMIT_PER_MIN=60
 | trust/vote spam | Rate limit per IP + per user; CAPTCHA **미결정** |
 | 악성 URL | scheme allowlist; optional domain blocklist |
 | XSS in comments | escape on display; markdown **미결정** |
-| mass topic/claim | throttle `POST /topics`; moderation queue **미결정** |
+| mass topic/claim | throttle `POST /topics`; **신고 → hide** (`content_reports` + `hidden_at`) |
 | score manipulation | 클라이언트 factScore **제거**, server-only |
 | JWT theft | SecureStore, short TTL, refresh rotation |
 
@@ -570,24 +606,31 @@ RATE_LIMIT_PER_MIN=60
 
 ---
 
-## 13. 열린 제품 결정 (구현 전 확인)
+## 13. 확정된 제품 결정 (2026-11-04)
 
-HANDOFF §6과 동일. **이 문서는 기본값을 강제하지 않는다.**
+HANDOFF §6과 동일. 구현 시 이 기본값을 따른다.
 
-- [ ] TRUST_MIN=3, MIN_ELIGIBLE_SAME_DIR=2, FACT_THRESHOLD=0.65 적절성
-- [ ] URL **도메인 단위** distinct source for C3
-- [ ] neutral evidence의 적격 **카운트** 포함 여부 (현 TS: pool에는 포함, weight에는 제외)
-- [ ] Fact/Lie 확정 후 재오픈 / score history
-- [ ] 토픽·claim 공개 vs moderation
-- [ ] 익명 vs 로그인 필수
-- [ ] 댓글 linked_vote vs claim vote **단일 1표** 모델
+- [x] `TRUST_MIN=3`, `MIN_ELIGIBLE_SAME_DIR=2`, `FACT_THRESHOLD=0.65`
+- [x] C3: **distinct URL domain** per direction; weights = **sum trust per domain**, then sum domains
+- [x] `neutral`: not eligible, not in weights
+- [x] After Fact/Lie: **always recompute** on new evidence/trust (verdict may change)
+- [x] Topics/claims **published immediately**; **report → hide** moderation hook
+- [x] **Login required** for vote & trust; **public read** for GET feeds/detail
+- [x] **Supabase Auth** + FastAPI JWT verification
+- [x] Comment `linked_vote` = same single vote per user per claim
+
+## 14. 아직 열린 결정
+
 - [ ] `participants` 집계 정의
-
-결정 시: `HANDOFF.md` §6 + 본 문서 §3.3/§6.3 갱신, `RULE_VERSION` bump 여부 검토.
+- [ ] topic `updated_at` 갱신 트리거
+- [ ] `claim_scores` history / audit rows
+- [ ] 파일 업로드 세부 (MIME, size, scan)
+- [ ] 댓글 markdown, CAPTCHA, rate limit 숫자
+- [ ] `users.display_name` Supabase metadata 필드
 
 ---
 
-## 14. 관련 파일 빠른 참조
+## 15. 관련 파일 빠른 참조
 
 | 경로 | 역할 |
 |------|------|
@@ -597,7 +640,7 @@ HANDOFF §6과 동일. **이 문서는 기본값을 강제하지 않는다.**
 | `mobile/src/data/seed.ts` | 시드·golden fixture |
 | `mobile/src/scoring/*` | 서버 포팅 원본 |
 | `mobile/src/app/*` | 화면별 repo 호출 |
-| [`HANDOFF.md`](./HANDOFF.md) | 제품·규칙·열린 결정 |
+| [`HANDOFF.md`](./HANDOFF.md) | 제품·규칙·확정/열린 결정 |
 
 ---
 

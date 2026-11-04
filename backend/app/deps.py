@@ -3,9 +3,9 @@ from typing import Annotated
 
 from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from jose import JWTError, jwt
 from sqlalchemy.orm import Session
 
+from app.auth.supabase_jwt import AuthTokenError, decode_supabase_access_token
 from app.config import settings
 from app.db import get_db
 from app.models import User
@@ -18,19 +18,38 @@ class CurrentUser:
     user: User
 
 
+def _auth_http_401(detail: str = "AUTH_INVALID") -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail=detail,
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
 def _get_or_create_user(db: Session, external_id: str, display_name: str) -> User:
     user = db.query(User).filter(User.external_id == external_id).one_or_none()
     if user:
-        if user.display_name != display_name:
-            user.display_name = display_name
-            db.commit()
-            db.refresh(user)
         return user
     user = User(external_id=external_id, display_name=display_name)
     db.add(user)
     db.commit()
     db.refresh(user)
     return user
+
+
+def _upsert_user_from_claims(db: Session, claims: dict) -> User:
+    sub = claims.get("sub")
+    if not sub:
+        raise _auth_http_401()
+    email = claims.get("email")
+    if isinstance(email, str) and email:
+        placeholder = email.split("@")[0][:20]
+    else:
+        placeholder = str(sub).replace("-", "")[:20] or "user"
+    user = db.query(User).filter(User.external_id == sub).one_or_none()
+    if user:
+        return user
+    return _get_or_create_user(db, sub, placeholder)
 
 
 def _get_or_create_dev_user(db: Session) -> User:
@@ -48,33 +67,23 @@ def _resolve_dev_user(
         name = dev_display_name.strip()
         if not name:
             return _get_or_create_dev_user(db)
+        user = db.query(User).filter(User.external_id == dev_user_id.strip()).one_or_none()
+        if user:
+            if user.display_name != name:
+                user.display_name = name
+                db.commit()
+                db.refresh(user)
+            return user
         return _get_or_create_user(db, dev_user_id.strip(), name)
     return _get_or_create_dev_user(db)
 
 
-def _user_from_supabase_token(db: Session, token: str) -> User:
-    if not settings.supabase_jwt_secret:
-        raise HTTPException(status.HTTP_501_NOT_IMPLEMENTED, detail="Supabase JWT not configured")
+def _user_from_bearer(db: Session, token: str) -> User:
     try:
-        payload = jwt.decode(
-            token,
-            settings.supabase_jwt_secret,
-            algorithms=["HS256"],
-            audience="authenticated",
-        )
-    except JWTError as exc:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid token") from exc
-    sub = payload.get("sub")
-    if not sub:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
-    user = db.query(User).filter(User.external_id == sub).one_or_none()
-    if not user:
-        name = payload.get("email") or sub[:20]
-        user = User(external_id=sub, display_name=name)
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-    return user
+        claims = decode_supabase_access_token(token)
+    except AuthTokenError as exc:
+        raise _auth_http_401(str(exc) if str(exc) else "AUTH_INVALID") from exc
+    return _upsert_user_from_claims(db, claims)
 
 
 def get_current_user(
@@ -85,10 +94,9 @@ def get_current_user(
 ) -> CurrentUser:
     if settings.auth_mode == "dev":
         return CurrentUser(user=_resolve_dev_user(db, dev_user_id, dev_display_name))
-    if not creds:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Authorization required")
-    user = _user_from_supabase_token(db, creds.credentials)
-    return CurrentUser(user=user)
+    if not creds or creds.scheme.lower() != "bearer":
+        raise _auth_http_401("AUTH_REQUIRED")
+    return CurrentUser(user=_user_from_bearer(db, creds.credentials))
 
 
 def get_optional_user(
@@ -101,9 +109,9 @@ def get_optional_user(
         if dev_user_id and dev_display_name:
             return CurrentUser(user=_resolve_dev_user(db, dev_user_id, dev_display_name))
         return None
-    if not creds:
+    if not creds or creds.scheme.lower() != "bearer":
         return None
     try:
-        return CurrentUser(user=_user_from_supabase_token(db, creds.credentials))
+        return CurrentUser(user=_user_from_bearer(db, creds.credentials))
     except HTTPException:
         return None

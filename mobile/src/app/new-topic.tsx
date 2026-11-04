@@ -12,17 +12,20 @@ import {
 
 import { Screen } from "@/components/layout";
 import { GhostButton, PrimaryButton } from "@/components/ui";
+import { useRequireAuthForWrite } from "@/auth/useRequireAuthForWrite";
 import { useFactfulness } from "@/context/FactfulnessContext";
 import { Colors, Fonts, Spacing } from "@/theme/brand";
 
 export default function NewTopicScreen() {
   const { repo } = useFactfulness();
+  const requireAuth = useRequireAuthForWrite();
   const [title, setTitle] = useState("");
   const [summary, setSummary] = useState("");
   const [claim, setClaim] = useState("");
 
   const submit = () => {
     if (!title.trim() || !summary.trim() || !claim.trim()) return;
+    requireAuth(() => {
     void Promise.resolve(
       repo.proposeTopic({
         title: title.trim(),
@@ -30,6 +33,7 @@ export default function NewTopicScreen() {
         firstClaimText: claim.trim(),
       }),
     ).then((topic) => router.replace(`/topic/${topic.id}`));
+    });
   };
 
   return (

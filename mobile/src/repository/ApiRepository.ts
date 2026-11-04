@@ -1,7 +1,8 @@
 import type { AppData, Claim, Comment, Evidence, Topic } from "@/data/types";
 import type { NotificationPrefs } from "@/config/notifications";
 import { DEFAULT_NOTIFICATION_PREFS } from "@/config/notifications";
-import { FactfulnessApiClient, type DevAuthHeaders } from "@/api/client";
+import { FactfulnessApiClient, buildAuthFromGetter } from "@/api/client";
+import { getDevProfileHeaders } from "@/auth/devProfileBridge";
 import {
   applyScoresToClaim,
   bootstrapToAppData,
@@ -35,16 +36,27 @@ export class ApiFactfulnessRepository implements FactfulnessRepository {
   private data: AppData;
   private listeners = new Set<() => void>();
   private client: FactfulnessApiClient;
-  private devAuth: DevAuthHeaders | null = null;
+  private getBearer: () => string | null;
   private onError: ((err: ApiRepositoryError) => void) | null = null;
 
-  private constructor(baseUrl: string, data: AppData) {
+  private constructor(
+    baseUrl: string,
+    data: AppData,
+    getBearer: () => string | null,
+  ) {
     this.data = data;
-    this.client = new FactfulnessApiClient(baseUrl, () => this.devAuth);
+    this.getBearer = getBearer;
+    this.client = new FactfulnessApiClient(
+      baseUrl,
+      buildAuthFromGetter(getBearer, getDevProfileHeaders),
+    );
   }
 
-  static async create(baseUrl: string): Promise<ApiFactfulnessRepository> {
-    const repo = new ApiFactfulnessRepository(baseUrl, emptyAppDataShell("api-user"));
+  static async create(
+    baseUrl: string,
+    getBearer: () => string | null = () => null,
+  ): Promise<ApiFactfulnessRepository> {
+    const repo = new ApiFactfulnessRepository(baseUrl, emptyAppDataShell("api-user"), getBearer);
     await repo.reload();
     return repo;
   }
@@ -56,7 +68,7 @@ export class ApiFactfulnessRepository implements FactfulnessRepository {
   async reload(): Promise<void> {
     try {
       const payload = await this.client.request<ApiBootstrap>("/v1/bootstrap");
-      const uid = this.devAuth?.externalId ?? this.data.localUserId;
+      const uid = this.getBearer() ? this.data.localUserId : getDevProfileHeaders()?.externalId ?? this.data.localUserId;
       this.data = bootstrapToAppData(payload, uid);
       this.notify();
     } catch (err) {
@@ -87,7 +99,6 @@ export class ApiFactfulnessRepository implements FactfulnessRepository {
   }
 
   setLocalUser(userId: string, nickname: string): void {
-    this.devAuth = { externalId: userId, displayName: nickname };
     this.data.localUserId = userId;
     void this.client
       .request("/v1/users/me", {
@@ -97,6 +108,10 @@ export class ApiFactfulnessRepository implements FactfulnessRepository {
       .then(() => this.reload())
       .catch((err) => this.emitError(err));
     this.notify();
+  }
+
+  async fetchMe(): Promise<{ externalId: string; displayName: string }> {
+    return this.client.request("/v1/users/me");
   }
 
   getData(): AppData {

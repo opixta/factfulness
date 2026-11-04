@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ApiFactfulnessRepository } from "@/repository/ApiRepository";
+import { setDevProfileGetter } from "@/auth/devProfileBridge";
 
 const bootstrapPayload = {
   topics: [
@@ -87,7 +88,8 @@ describe("ApiFactfulnessRepository", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const repo = await ApiFactfulnessRepository.create("http://127.0.0.1:8000");
+    const repo = await ApiFactfulnessRepository.create("http://127.0.0.1:8000", () => null);
+    setDevProfileGetter(() => ({ externalId: "u_test", displayName: "Tester" }));
     repo.setLocalUser("u_test", "Tester");
     repo.castVote("c-1", "true");
 

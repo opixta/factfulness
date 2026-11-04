@@ -31,7 +31,22 @@ By default the app uses **offline local storage** with seed data (`LocalFactfuln
 
 1. Start Postgres + API — see [`../backend/README.md`](../backend/README.md) (`uvicorn --host 0.0.0.0 --port 8000`).
 2. Copy `.env.example` → `.env` and set `EXPO_PUBLIC_API_URL` (restart Expo after changes).
-3. Complete nickname onboarding — dev auth headers identify your user to the API.
+3. Complete nickname onboarding — dev auth headers identify your user to the API, or log in with Supabase when configured (see below).
+
+### Supabase login (optional)
+
+Without Supabase env vars, the app uses **offline mode** or **dev headers** against `AUTH_MODE=dev` (see backend README). To enable real login:
+
+1. Create a Supabase project and copy keys — step-by-step: [`../backend/README.md`](../backend/README.md#auth) (**Create your Supabase project**).
+2. Copy `mobile/.env.example` → `.env` and set:
+   - `EXPO_PUBLIC_SUPABASE_URL` — Project URL from Supabase **Project Settings → API**
+   - `EXPO_PUBLIC_SUPABASE_ANON_KEY` — **anon public** key (same page)
+3. Set backend `AUTH_MODE=supabase` and `SUPABASE_URL` when you want the API to verify JWTs (local dev can stay on `dev` until then).
+4. Restart Expo after env changes: `npx expo start -c`.
+5. **Login** screen: email **OTP** (6-digit code from email) is the default; password login is available as a secondary option. After first sign-up, set your **nickname** (synced via `PATCH /v1/users/me`).
+6. **Settings** → log out clears the Supabase session.
+
+Email OTP works in **Expo Go** without native OAuth configuration. No redirect URLs are required for OTP-only flows.
 
 | Where you run the app | `EXPO_PUBLIC_API_URL` |
 |-----------------------|------------------------|

@@ -12,19 +12,23 @@ import {
 
 import { Screen } from "@/components/layout";
 import { GhostButton, PrimaryButton } from "@/components/ui";
+import { useRequireAuthForWrite } from "@/auth/useRequireAuthForWrite";
 import { useFactfulness } from "@/context/FactfulnessContext";
 import { Colors, Fonts, Spacing } from "@/theme/brand";
 
 export default function NewClaimScreen() {
   const { topicId } = useLocalSearchParams<{ topicId: string }>();
   const { repo } = useFactfulness();
+  const requireAuth = useRequireAuthForWrite();
   const topic = repo.getTopic(topicId);
   const [text, setText] = useState("");
   const [reason, setReason] = useState("");
 
   const submit = () => {
+    requireAuth(() => {
     void Promise.resolve(repo.proposeClaim(topicId, { text, reason })).then((claim) => {
       if (claim) router.back();
+    });
     });
   };
 

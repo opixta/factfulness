@@ -19,7 +19,7 @@ import { createFactfulnessRepository } from "@/repository/createRepository";
 import type { FactfulnessRepository } from "@/repository/types";
 import { evidenceInputsFromList } from "@/scoring/evidenceInput";
 import { factScore, opinionScore } from "@/scoring";
-import { registerPushNotificationsStub } from "@/notifications/registerPush";
+import { syncPushTokenWithApi } from "@/notifications/syncPushToken";
 
 interface FactfulnessContextValue {
   ready: boolean;
@@ -63,9 +63,7 @@ export function FactfulnessProvider({ children }: { children: React.ReactNode })
           instance.setErrorHandler((err) => setLoadError(err));
         }
         unsub = instance.subscribe(refresh);
-        return registerPushNotificationsStub(instance.getNotificationPrefs()).then((token) => {
-          instance.setPushTokenDev(token);
-        });
+        return syncPushTokenWithApi(instance, instance.getNotificationPrefs());
       })
       .catch((err: unknown) => {
         setLoadError({

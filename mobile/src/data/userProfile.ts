@@ -19,4 +19,5 @@ export const PROFILE_STORAGE_KEY = "@factfulness/user-profile-v1";
 export interface LocalUserProfile {
   userId: string;
   nickname: string;
+  nicknameConfirmed?: boolean;
 }

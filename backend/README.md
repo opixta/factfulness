@@ -61,9 +61,27 @@ When you are ready:
 5. Optional **password** sign-in: **Authentication** → **Providers** → Email → allow sign-ups / confirm email per your policy.
 6. **JWT signing keys:** newer projects use asymmetric keys automatically (backend uses JWKS). If your project still shows a **JWT secret** under API → JWT Settings, you may set `SUPABASE_JWT_SECRET` for HS256 tokens during migration.
 7. Backend: set `AUTH_MODE=supabase`, restart uvicorn. Mobile: set both `EXPO_PUBLIC_SUPABASE_*` vars, restart Expo (`npx expo start -c`).
-8. After first login, the app prompts for a **nickname** and calls `PATCH /v1/users/me` (display name is not taken from Supabase metadata by default).
+8. After first login, the app prompts for a **nickname** and calls `PATCH /v1/users/me`. The server sets `nickname_confirmed_at`; `GET /v1/users/me` and bootstrap `me` expose `nicknameConfirmed: true` after that (used to skip onboarding on reinstall / new devices).
 
 **Redirect URLs:** not required for email OTP in Expo Go. If you later add magic links or OAuth, add your app’s deep link under **Authentication** → **URL Configuration**.
+
+### Nickname confirmation (server)
+
+- New users (JWT upsert or dev headers) start with `nicknameConfirmed: false` until `PATCH /v1/users/me` with a display name.
+- Bootstrap includes `me` when the request is authenticated (dev headers or Bearer).
+
+### Verdict push (Expo)
+
+When a claim’s `fact_status` changes after recompute, the API notifies **participants** (vote, evidence, comment, trust) who have `notify_verdict_change` enabled and a stored Expo push token.
+
+- Register token: `POST /v1/users/me/push-token` (mobile does this when the settings toggle is on).
+- Clear tokens: `DELETE /v1/users/me/push-token` when notifications are disabled.
+- Env: `PUSH_SENDER=fake` (default, tests/CI) or `PUSH_SENDER=expo` to call `https://exp.host/--/api/v2/push/send`.
+- Invalid tokens (`DeviceNotRegistered`) are removed from `push_tokens`.
+
+**Local testing:** run API with `PUSH_SENDER=expo`, use Expo Go on a **physical device**, enable **판정 변경 알림**, vote on a claim, then trigger a verdict change (add evidence until scoring flips). Simulators do not receive remote pushes reliably.
+
+**Production builds (later):** configure FCM/APNs credentials in EAS; Expo Go uses Expo’s shared project — not for store builds.
 
 ### Mobile app (Expo) + local API
 

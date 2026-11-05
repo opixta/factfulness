@@ -159,3 +159,4 @@ class UserProfileIn(BaseModel):
 class UserProfileOut(BaseModel):
     externalId: str
     displayName: str
+    nicknameConfirmed: bool

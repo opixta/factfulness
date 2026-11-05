@@ -68,12 +68,19 @@ export type ApiCommentDto = {
   at: string;
 };
 
+export type ApiUserProfileDto = {
+  externalId: string;
+  displayName: string;
+  nicknameConfirmed: boolean;
+};
+
 export type ApiBootstrap = {
   topics: ApiTopicListItem[];
   claims: Record<string, ApiClaimSummary[]>;
   evidence: Record<string, ApiEvidenceDto[]>;
   comments: Record<string, ApiCommentDto[]>;
   notificationPrefs: NotificationPrefs;
+  me?: ApiUserProfileDto | null;
 };
 
 export function mapTopic(row: ApiTopicListItem): Topic {
@@ -175,6 +182,7 @@ export function bootstrapToAppData(
     localUserId,
     contentReports: {},
     notificationPrefs: payload.notificationPrefs ?? { ...DEFAULT_NOTIFICATION_PREFS },
+    userProfile: payload.me ?? undefined,
   };
 }
 

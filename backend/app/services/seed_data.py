@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from datetime import datetime, timezone
+
 from sqlalchemy.orm import Session
 
 from app.models import Claim, Evidence, EvidenceTrust, Topic, User, Vote, slug_uuid
@@ -17,7 +19,11 @@ def _ensure_user(db: Session, external_id: str, display_name: str) -> User:
     user = db.query(User).filter(User.external_id == external_id).one_or_none()
     if user:
         return user
-    user = User(external_id=external_id, display_name=display_name)
+    user = User(
+        external_id=external_id,
+        display_name=display_name,
+        nickname_confirmed_at=datetime.now(timezone.utc),
+    )
     db.add(user)
     db.flush()
     return user

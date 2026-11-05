@@ -69,7 +69,7 @@ export default function LoginScreen() {
         type: "email",
       });
       if (err) throw err;
-      router.replace("/onboarding-nickname" as Href);
+      router.replace("/(tabs)" as Href);
     } catch (e) {
       setError(e instanceof Error ? e.message : "코드 확인 실패");
     } finally {
@@ -88,7 +88,7 @@ export default function LoginScreen() {
         password,
       });
       if (err) throw err;
-      router.replace("/");
+      router.replace("/(tabs)" as Href);
     } catch (e) {
       setError(e instanceof Error ? e.message : "로그인 실패");
     } finally {

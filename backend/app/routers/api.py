@@ -15,7 +15,6 @@ from app.schemas.dto import (
     FileEvidenceUploadIn,
     ProposeClaimIn,
     ProposeTopicIn,
-    SearchHitOut,
     TopicDetailOut,
     TopicListItem,
     VoteIn,
@@ -30,7 +29,7 @@ from app.services.bootstrap import build_bootstrap
 from app.services.link_enrichment import build_wayback_archive_url, site_name_from_url
 from app.services.recompute import recompute_claim, touch_topic_activity
 from app.services.reports import report_content
-from app.services.search_query import normalize_search_query
+from app.services.search_content import search_title_hits
 from app.services.serialize import claim_detail, claim_summary, topic_detail, topic_list_item
 
 router = APIRouter()
@@ -272,46 +271,14 @@ def bootstrap(
 def search(
     q: str = "",
     limit: int = 30,
+    cursor: str | None = None,
     db: Session = Depends(get_db),
 ) -> dict:
-    if limit < 1 or limit > 50:
-        limit = 30
-    normalized = normalize_search_query(q)
-    if not normalized:
-        return {"hits": []}
-    hits: list[SearchHitOut] = []
-    seen_claims: set[uuid.UUID] = set()
-
-    topics = db.query(Topic).filter(Topic.hidden_at.is_(None)).all()
-    for topic in topics:
-        if normalized in normalize_search_query(topic.title):
-            hits.append(
-                SearchHitOut(type="topic", topicId=topic.id, title=topic.title, snippet=None)
-            )
-        claims = (
-            db.query(Claim)
-            .filter(Claim.topic_id == topic.id, Claim.hidden_at.is_(None))
-            .all()
-        )
-        for claim in claims:
-            if claim.id in seen_claims:
-                continue
-            if normalized in normalize_search_query(claim.text):
-                seen_claims.add(claim.id)
-                hits.append(
-                    SearchHitOut(
-                        type="claim",
-                        topicId=topic.id,
-                        claimId=claim.id,
-                        title=claim.text,
-                    )
-                )
-            if len(hits) >= limit:
-                break
-        if len(hits) >= limit:
-            break
-
-    return {"hits": [h.model_dump(mode="json") for h in hits[:limit]]}
+    hits, next_cursor = search_title_hits(db, q, limit=limit, cursor=cursor)
+    return {
+        "hits": [h.model_dump(mode="json") for h in hits],
+        "nextCursor": next_cursor,
+    }
 
 
 @router.post("/content/report")

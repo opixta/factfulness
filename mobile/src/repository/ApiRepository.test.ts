@@ -184,4 +184,32 @@ describe("ApiFactfulnessRepository", () => {
     });
     expect(item.fileScanStatus).toBe("clean");
   });
+
+  it("maps GET /v1/search hits to TitleSearchHit", async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.endsWith("/v1/bootstrap")) {
+        return new Response(JSON.stringify(bootstrapPayload), { status: 200 });
+      }
+      if (String(url).includes("/v1/search")) {
+        return new Response(
+          JSON.stringify({
+            hits: [
+              { type: "topic", topicId: "t-1", title: "Topic" },
+              { type: "claim", topicId: "t-1", claimId: "c-1", title: "Claim text" },
+            ],
+            nextCursor: "claim:c-1",
+          }),
+          { status: 200 },
+        );
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const repo = await ApiFactfulnessRepository.create("http://127.0.0.1:8000");
+    const page = await repo.searchTitles("claim");
+    expect(page.hits).toHaveLength(2);
+    expect(page.hits[1].claim?.id).toBe("c-1");
+    expect(page.nextCursor).toBe("claim:c-1");
+  });
 });

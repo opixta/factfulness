@@ -26,6 +26,7 @@ import {
 import { MAX_EVIDENCE_FILE_BYTES } from "@/data/types";
 import type { FactfulnessRepository } from "@/repository/types";
 import type { ReportTargetType } from "@/moderation/reportKeys";
+import type { TitleSearchHit } from "@/search/titleSearch";
 
 export type ApiRepositoryError = {
   message: string;
@@ -112,6 +113,36 @@ export class ApiFactfulnessRepository implements FactfulnessRepository {
 
   async fetchMe(): Promise<{ externalId: string; displayName: string }> {
     return this.client.request("/v1/users/me");
+  }
+
+  async searchTitles(
+    query: string,
+    opts?: { cursor?: string | null; signal?: AbortSignal },
+  ): Promise<{ hits: TitleSearchHit[]; nextCursor: string | null }> {
+    const params = new URLSearchParams({ q: query });
+    if (opts?.cursor) params.set("cursor", opts.cursor);
+    const body = await this.client.request<{
+      hits: {
+        type: string;
+        topicId: string;
+        claimId?: string | null;
+        title: string;
+      }[];
+      nextCursor: string | null;
+    }>(`/v1/search?${params.toString()}`, { signal: opts?.signal });
+
+    const hits: TitleSearchHit[] = [];
+    for (const row of body.hits) {
+      const topic = this.getTopic(row.topicId);
+      if (!topic) continue;
+      if (row.type === "claim" && row.claimId) {
+        const found = this.findClaim(row.claimId);
+        if (found) hits.push({ topic, claim: found.claim });
+      } else {
+        hits.push({ topic });
+      }
+    }
+    return { hits, nextCursor: body.nextCursor };
   }
 
   getData(): AppData {

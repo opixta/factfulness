@@ -43,5 +43,8 @@ class Settings(BaseSettings):
     rate_evidence_create_per_user_per_hour: int = 30
     rate_file_upload_per_user_per_hour: int = 30
 
+    push_sender: str = "fake"
+    expo_push_url: str = "https://exp.host/--/api/v2/push/send"
+
 
 settings = Settings()

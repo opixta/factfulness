@@ -18,11 +18,13 @@ import { StatusBar } from "expo-status-bar";
 import { FactfulnessProvider } from "@/context/FactfulnessContext";
 import { AuthProvider } from "@/context/AuthContext";
 import { UserProfileProvider } from "@/context/UserProfileContext";
+import { useVerdictNotificationNavigation } from "@/notifications/useVerdictNotificationNavigation";
 import { Colors } from "@/theme/brand";
 
 SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
+  useVerdictNotificationNavigation();
   const [frauncesLoaded] = useFraunces({
     Fraunces_500Medium,
     Fraunces_700Bold,

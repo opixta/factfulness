@@ -6,6 +6,7 @@ import { Card, Screen } from "@/components/layout";
 import { GhostButton, PrimaryButton } from "@/components/ui";
 import { useAuth } from "@/context/AuthContext";
 import { useFactfulness } from "@/context/FactfulnessContext";
+import { syncPushTokenWithApi } from "@/notifications/syncPushToken";
 import { Colors, Fonts, Spacing } from "@/theme/brand";
 
 export default function SettingsScreen() {
@@ -47,9 +48,11 @@ export default function SettingsScreen() {
             <Switch
               value={prefs.notifyVerdictChange}
               onValueChange={(notifyVerdictChange) => {
-                void Promise.resolve(
-                  repo.setNotificationPrefs({ notifyVerdictChange }),
-                );
+                void (async () => {
+                  const next = { notifyVerdictChange };
+                  await Promise.resolve(repo.setNotificationPrefs(next));
+                  await syncPushTokenWithApi(repo, next);
+                })();
               }}
               trackColor={{ true: Colors.teal, false: Colors.line }}
             />

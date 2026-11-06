@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.models import Claim, Comment, Evidence, Topic, User
 from app.schemas.dto import CommentDto
 from app.services.serialize import claim_summary, evidence_dto, topic_list_item
+from app.services.user_profile import user_profile_out
 
 
 def build_bootstrap(db: Session, user_id: UUID | None) -> dict:
@@ -51,9 +52,16 @@ def build_bootstrap(db: Session, user_id: UUID | None) -> dict:
                 for row, u in comment_rows
             ]
 
+    me = None
+    if user_id is not None:
+        user = db.get(User, user_id)
+        if user:
+            me = user_profile_out(user).model_dump(mode="json")
+
     return {
         "topics": topic_items,
         "claims": claims_out,
         "evidence": evidence_out,
         "comments": comments_out,
+        "me": me,
     }

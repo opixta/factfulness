@@ -87,7 +87,15 @@ export interface AppData {
   /** Local dev: last Expo push token from registration stub */
   pushTokenDev?: string;
   notificationPrefs: NotificationPrefs;
+  /** Present in API bootstrap when authenticated */
+  userProfile?: ApiUserProfile;
 }
+
+export type ApiUserProfile = {
+  externalId: string;
+  displayName: string;
+  nicknameConfirmed: boolean;
+};
 
 export const STORAGE_KEY = "@factfulness/app-data-v4";
 

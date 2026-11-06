@@ -48,6 +48,19 @@ Without Supabase env vars, the app uses **offline mode** or **dev headers** agai
 
 Email OTP works in **Expo Go** without native OAuth configuration. No redirect URLs are required for OTP-only flows.
 
+**Nickname onboarding** follows the server flag `nicknameConfirmed` from `GET /v1/users/me` / bootstrap `me` (not device-only storage).
+
+### Push notifications (API mode + Expo Go)
+
+1. Set `EXPO_PUBLIC_API_URL` and run the backend (`PUSH_SENDER=expo` to deliver real pushes).
+2. In the app **Settings**, turn on **판정 변경 알림** and allow notification permission when prompted.
+3. The app registers an Expo push token and sends it to `POST /v1/users/me/push-token`.
+4. Participate on a claim (vote, comment, evidence, or trust), then wait for a verdict change after scoring updates — you should receive a push with Korean title/body. Tap it to open the claim screen.
+
+**Tips:** use a **physical phone** with Expo Go; emulators often do not show remote notifications. Turning the toggle off calls `DELETE /v1/users/me/push-token` on the API.
+
+**Production:** store builds need EAS push credentials (FCM/APNs); Expo Go is for development only.
+
 | Where you run the app | `EXPO_PUBLIC_API_URL` |
 |-----------------------|------------------------|
 | Android emulator | `http://10.0.2.2:8000` |

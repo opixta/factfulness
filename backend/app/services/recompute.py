@@ -17,6 +17,7 @@ from app.models import (
 from app.scoring.fact_score import fact_score
 from app.scoring.opinion import opinion_score
 from app.scoring.types import EvidenceInput
+from app.services.verdict_push import notify_verdict_change
 
 
 def evidence_to_input(row: Evidence, trust: int) -> EvidenceInput:
@@ -57,6 +58,9 @@ def count_votes(db: Session, claim_id: uuid.UUID) -> tuple[int, int]:
 
 def recompute_claim(db: Session, claim_id: uuid.UUID) -> ClaimScore:
     db.flush()
+    score = db.get(ClaimScore, claim_id)
+    old_status = score.fact_status if score else None
+
     votes_true, votes_false = count_votes(db, claim_id)
     op = opinion_score(votes_true, votes_false)
     fact = fact_score(load_evidence_inputs(db, claim_id))
@@ -97,6 +101,7 @@ def recompute_claim(db: Session, claim_id: uuid.UUID) -> ClaimScore:
     )
     db.add(history)
     db.flush()
+    notify_verdict_change(db, claim_id, old_status, fact["status"])
     return score
 
 

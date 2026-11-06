@@ -1,5 +1,7 @@
 import uuid
 
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -14,14 +16,14 @@ from app.schemas.dto import (
     UserProfileIn,
     UserProfileOut,
 )
+from app.services.user_profile import user_profile_out
 
 router = APIRouter(prefix="/users/me", tags=["users"])
 
 
 @router.get("", response_model=UserProfileOut)
 def get_profile(auth: CurrentUser = Depends(get_current_user)) -> UserProfileOut:
-    u = auth.user
-    return UserProfileOut(externalId=u.external_id, displayName=u.display_name)
+    return user_profile_out(auth.user)
 
 
 @router.patch("", response_model=UserProfileOut)
@@ -32,16 +34,18 @@ def update_profile(
 ) -> UserProfileOut:
     name = body.displayName.strip()
     u = auth.user
-    if u.display_name == name:
-        return UserProfileOut(externalId=u.external_id, displayName=u.display_name)
+    if u.display_name == name and u.nickname_confirmed_at is not None:
+        return user_profile_out(u)
     u.display_name = name
+    if u.nickname_confirmed_at is None:
+        u.nickname_confirmed_at = datetime.now(timezone.utc)
     try:
         db.commit()
         db.refresh(u)
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, detail="NICKNAME_TAKEN") from exc
-    return UserProfileOut(externalId=u.external_id, displayName=u.display_name)
+    return user_profile_out(u)
 
 
 @router.get("/notification-prefs", response_model=NotificationPrefsOut)
@@ -77,4 +81,13 @@ def upsert_push_token(
                 platform=body.platform,
             )
         )
+    db.commit()
+
+
+@router.delete("/push-token", status_code=status.HTTP_204_NO_CONTENT)
+def clear_push_tokens(
+    db: Session = Depends(get_db),
+    auth: CurrentUser = Depends(get_current_user),
+) -> None:
+    db.query(PushToken).filter(PushToken.user_id == auth.user.id).delete()
     db.commit()

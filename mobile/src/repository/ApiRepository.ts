@@ -111,7 +111,11 @@ export class ApiFactfulnessRepository implements FactfulnessRepository {
     this.notify();
   }
 
-  async fetchMe(): Promise<{ externalId: string; displayName: string }> {
+  async fetchMe(): Promise<{
+    externalId: string;
+    displayName: string;
+    nicknameConfirmed: boolean;
+  }> {
     return this.client.request("/v1/users/me");
   }
 
@@ -361,7 +365,13 @@ export class ApiFactfulnessRepository implements FactfulnessRepository {
 
   setPushTokenDev(token: string | null): void {
     this.data.pushTokenDev = token ?? undefined;
-    if (!token) return;
+    if (!token) {
+      void this.client.request("/v1/users/me/push-token", { method: "DELETE" }).catch((err) => {
+        this.emitError(err);
+      });
+      this.notify();
+      return;
+    }
     void this.client
       .request("/v1/users/me/push-token", {
         method: "POST",
